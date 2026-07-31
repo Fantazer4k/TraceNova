@@ -1,1 +1,3 @@
-This project is a finder information about countries
+# site-project
+
+A tool for finding information about countries.
