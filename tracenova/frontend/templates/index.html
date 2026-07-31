@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TraceNova - AI Digital Intelligence Platform</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Interactive Grid Background -->
+    <canvas id="gridCanvas"></canvas>
+
+    <div class="container">
+        <!-- Navbar -->
+        <nav class="navbar">
+            <div class="navbar-content">
+                <h1 class="logo">TraceNova</h1>
+                <div class="nav-right">
+                    <a href="https://github.com/Fantazer4k/TraceNova" target="_blank" class="nav-link">Docs</a>
+                    <button class="btn-login" onclick="alert('Login feature coming soon! Will save your searches and favorites.')">Login</button>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Hero -->
+        <section class="hero">
+            <h2 class="hero-title">Understand the Internet</h2>
+            <p class="hero-subtitle">AI-powered digital intelligence platform</p>
+            
+            <div class="search-box-wrapper">
+                <div class="search-box">
+                    <div class="select-wrapper">
+                        <select id="queryType">
+                            <optgroup label="Domain & Network">
+                                <option value="domain">Domain</option>
+                                <option value="url">URL</option>
+                                <option value="ip">IP Address</option>
+                            </optgroup>
+                            <optgroup label="People & Accounts">
+                                <option value="username">Username</option>
+                                <option value="email">Email</option>
+                                <option value="phone">Phone Number</option>
+                            </optgroup>
+                        </select>
+                        <span id="helpIcon" class="help-icon" title="Click for info">?</span>
+                    </div>
+                    <input type="text" id="queryInput" placeholder="Enter search query...">
+                    <button id="analyzeBtn">Analyze</button>
+                </div>
+
+                <!-- Help Modal -->
+                <div id="helpModal" class="help-modal hidden">
+                    <div class="help-content">
+                        <span id="closeHelp" class="close-help">✕</span>
+                        <h3 id="helpTitle"></h3>
+                        <p id="helpText"></p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Results -->
+        <section id="results" class="results hidden">
+            <div id="resultContent"></div>
+        </section>
+    </div>
+
+    <script src="/static/interactions.js"></script>
+    <script src="/static/script.js"></script>
+</body>
+</html>
