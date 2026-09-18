@@ -1,5 +1,8 @@
 """
-Comprehensive Phone Number Search - Get EVERYTHING
+Phone-number search services.
+
+Only confirmed API/database results are reported as found. Inferred metadata
+and manual lookup links are labelled separately.
 """
 
 import asyncio
@@ -8,127 +11,114 @@ import re
 from typing import Dict, Optional
 from urllib.parse import quote
 
-PHONE_REGEX = r'^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$'
-
 
 async def search_phone(phone: str) -> Dict:
-    """Comprehensive phone search - extract ALL available information"""
-    phone_clean = re.sub(r'[^\d+]', '', phone)
+    """Search public sources for a phone number."""
+    phone_clean = re.sub(r"[^\d+]", "", phone or "")
 
-    if not phone_clean or len(phone_clean) < 10:
+    if not phone_clean or len(re.sub(r"\D", "", phone_clean)) < 10:
         return {
             "status": "error",
             "phone": phone,
-            "message": "Please enter a valid phone number (10+ digits)"
+            "message": "Please enter a valid phone number (10+ digits)",
         }
 
     found_sources = []
+    info_sources = []
 
     try:
-        import ssl
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-
-        async with aiohttp.ClientSession(connector=connector) as session:
-            # Run ALL searches in parallel
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             tasks = [
                 _get_phone_validation(session, phone_clean),
                 _get_carrier_info(session, phone_clean),
-                _get_type_info(session, phone_clean),
                 _check_breach_phone(session, phone_clean),
-                _search_phone_online(session, phone_clean),
-                _get_location_info(session, phone_clean),
-                _get_reputation(session, phone_clean),
-                _search_truecaller_real(session, phone_clean),
             ]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for result in results:
-                try:
-                    if result and isinstance(result, dict) and result.get("found"):
+                if isinstance(result, dict):
+                    if result.get("found"):
                         found_sources.append(result)
-                except Exception as e:
-                    print(f"Result processing error: {e}")
-                    continue
+                    elif result.get("status") == "info":
+                        info_sources.append(result)
 
-    except Exception as e:
-        print(f"Phone search error: {e}")
-        return {"status": "error", "phone": phone, "message": f"Search error: {str(e)}"}
-
-    # Sort by priority
-    try:
-        found_sources.sort(key=lambda x: x.get("priority", 0), reverse=True)
-    except Exception as e:
-        print(f"Sort error: {e}")
-
-    if len(found_sources) == 0:
+    except Exception:
         return {
-            "status": "no_results",
+            "status": "error",
+            "phone": phone,
+            "message": "Unable to complete the phone search.",
+        }
+
+    info_sources.extend([
+        _get_format_info(phone_clean),
+        _get_location_info(phone_clean),
+    ])
+
+    manual_sources = [
+        _manual_google_search(phone_clean),
+        _manual_truecaller_search(phone_clean),
+    ]
+
+    found_sources.sort(key=lambda x: x.get("priority", 0), reverse=True)
+
+    if not found_sources:
+        return {
+            "status": "info",
             "phone": phone,
             "found_in_sources": [],
+            "info_sources": info_sources,
+            "manual_sources": manual_sources,
             "total_sources": 0,
-            "summary": f"No results found for {phone}"
+            "summary": "No confirmed matches found. Inferred information and manual searches are available.",
         }
 
     return {
         "status": "success",
         "phone": phone,
         "found_in_sources": found_sources,
+        "info_sources": info_sources,
+        "manual_sources": manual_sources,
         "total_sources": len(found_sources),
-        "summary": f"Found in {len(found_sources)} source(s) - see details below"
+        "summary": f"Found {len(found_sources)} confirmed source(s)",
     }
 
 
 async def _get_phone_validation(session: aiohttp.ClientSession, phone: str) -> Optional[Dict]:
-    """Get phone validation details"""
     try:
-        # Try multiple validation APIs
-        apis = [
-            f"https://api.numverify.com/validate?number={phone}&access_key=free",
-            f"https://neutrinoapi.com/phone-validate?number={phone}",
-        ]
+        url = f"https://api.numverify.com/validate?number={quote(phone)}&access_key=free"
 
-        for url in apis:
-            try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if data.get("valid") or data.get("is_valid"):
-                            return {
-                                "found": True,
-                                "source": "Phone Validation",
-                                "icon": "✅",
-                                "description": f"Phone number is VALID",
-                                "details": {
-                                    "Number": phone,
-                                    "Valid": "Yes",
-                                    "Country": data.get("country_name", "Unknown"),
-                                    "Country Code": data.get("country_code", "N/A"),
-                                    "Type": data.get("number_type", "Unknown"),
-                                    "Carrier": data.get("carrier", "Unknown"),
-                                },
-                                "type": "validation",
-                                "priority": 100
-                            }
-            except Exception as e:
-                print(f"Validation API error: {e}")
-                continue
-
-    except Exception as e:
-        print(f"Phone validation error: {e}")
-
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data.get("valid") or data.get("is_valid"):
+                    return {
+                        "found": True,
+                        "source": "Phone Validation",
+                        "icon": "✅",
+                        "description": "Phone number was validated by the configured service.",
+                        "details": {
+                            "Number": phone,
+                            "Valid": "Yes",
+                            "Country": data.get("country_name", "Unknown"),
+                            "Country Code": data.get("country_code", "N/A"),
+                            "Type": data.get("number_type", "Unknown"),
+                            "Carrier": data.get("carrier", "Unknown"),
+                        },
+                        "type": "validation",
+                        "priority": 100,
+                    }
+    except Exception:
+        return None
     return None
 
 
 async def _get_carrier_info(session: aiohttp.ClientSession, phone: str) -> Optional[Dict]:
-    """Get carrier information"""
     try:
-        url = f"https://api.abstract-api.com/v1/phone-validation/?api_key=free&phone={phone}"
+        url = f"https://api.abstract-api.com/v1/phone-validation/?api_key=free&phone={quote(phone)}"
 
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as response:
+        async with session.get(url) as response:
             if response.status == 200:
                 data = await response.json()
                 if data.get("valid"):
@@ -136,7 +126,7 @@ async def _get_carrier_info(session: aiohttp.ClientSession, phone: str) -> Optio
                         "found": True,
                         "source": "Carrier Information",
                         "icon": "📞",
-                        "description": f"Carrier: {data.get('carrier', 'Unknown')}",
+                        "description": "Carrier information was returned by the configured service.",
                         "details": {
                             "Carrier": data.get("carrier", "Unknown"),
                             "Type": data.get("type", "Unknown"),
@@ -144,188 +134,111 @@ async def _get_carrier_info(session: aiohttp.ClientSession, phone: str) -> Optio
                             "Timezone": data.get("timezone", "Unknown"),
                         },
                         "type": "carrier",
-                        "priority": 95
+                        "priority": 95,
                     }
-
-    except Exception as e:
-        print(f"Carrier info error: {e}")
-
-    return None
-
-
-async def _get_type_info(session: aiohttp.ClientSession, phone: str) -> Optional[Dict]:
-    """Determine phone type (mobile/landline/etc)"""
-    try:
-        # Extract country code
-        country_code = "+1" if phone.startswith("+1") else "+"
-
-        return {
-            "found": True,
-            "source": "Phone Type",
-            "icon": "📱",
-            "description": f"Detected phone type information",
-            "details": {
-                "Format": phone,
-                 "Digits": len(re.sub(r'[^\d]', '', phone)),
-                "Type": "Mobile" if len(re.sub(r'[^\d]', '', phone)) >= 11 else "Landline",
-                "International": "Yes" if phone.startswith("+") else "No",
-            },
-            "type": "type_info",
-            "priority": 80
-        }
-
-    except Exception as e:
-        print(f"Type info error: {e}")
-
+    except Exception:
+        return None
     return None
 
 
 async def _check_breach_phone(session: aiohttp.ClientSession, phone: str) -> Optional[Dict]:
-    """Check if phone in data breaches"""
     try:
-        url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{phone}"
+        url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{quote(phone, safe='')}"
         headers = {"User-Agent": "TraceNova/1.0"}
 
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as response:
+        async with session.get(url, headers=headers) as response:
             if response.status == 200:
                 breaches = await response.json()
-                if breaches and len(breaches) > 0:
-                    breach_names = [b.get("Name") for b in breaches]
+                if breaches:
                     return {
                         "found": True,
                         "source": "Data Breaches",
                         "source_url": "https://haveibeenpwned.com",
                         "icon": "⚠️",
-                        "warning": "⚠️ FOUND IN BREACHES",
-                        "description": f"Phone found in {len(breaches)} data breach(es)",
-                        "details": {
-                            "Breaches": ", ".join(breach_names[:5]),
-                            "Total Found": len(breaches),
-                        },
-                        "breaches": breach_names,
+                        "warning": "FOUND IN BREACHES",
+                        "description": f"Found in {len(breaches)} data breach(es)",
+                        "breaches": [b.get("Name") for b in breaches],
                         "type": "security_alert",
-                        "priority": 120
+                        "priority": 120,
                     }
-
-    except Exception as e:
-        print(f"Breach check error: {e}")
-
+            elif response.status == 404:
+                return None
+    except Exception:
+        return None
     return None
 
 
-async def _search_phone_online(session: aiohttp.ClientSession, phone: str) -> Optional[Dict]:
-    """Search online for phone mentions"""
-    try:
-        return {
-            "found": True,
-            "source": "Google Search",
-            "source_url": f"https://www.google.com/search?q=%22{quote(phone)}%22",
-            "icon": "🔍",
-            "description": f"Find all public mentions of {phone}",
-            "details": {
-                "Method": "Google Search",
-                "Coverage": "Web-wide",
-                "Privacy": "Public only",
-            },
-            "note": "Searches across the entire web",
-            "type": "web_search",
-            "priority": 60
-        }
-
-    except Exception as e:
-        print(f"Online search error: {e}")
-
-    return None
+def _get_format_info(phone: str) -> Dict:
+    digits = re.sub(r"\D", "", phone)
+    return {
+        "status": "info",
+        "source": "Number Format",
+        "icon": "📱",
+        "description": "Format information inferred from the supplied number.",
+        "details": {
+            "Format": phone,
+            "Digits": len(digits),
+            "International": "Yes" if phone.startswith("+") else "No",
+        },
+        "type": "format_info",
+        "priority": 20,
+    }
 
 
-async def _get_location_info(session: aiohttp.ClientSession, phone: str) -> Optional[Dict]:
-    """Get location information"""
-    try:
-        # Extract country code (basic)
-        country_codes = {
-            "+1": "USA/Canada",
-            "+44": "United Kingdom",
-            "+33": "France",
-            "+49": "Germany",
-            "+39": "Italy",
-            "+34": "Spain",
-            "+31": "Netherlands",
-            "+38": "Europe",
-            "+86": "China",
-            "+91": "India",
-            "+61": "Australia",
-        }
+def _get_location_info(phone: str) -> Dict:
+    country_codes = {
+        "+1": "USA/Canada",
+        "+44": "United Kingdom",
+        "+33": "France",
+        "+49": "Germany",
+        "+39": "Italy",
+        "+34": "Spain",
+        "+31": "Netherlands",
+        "+38": "Europe",
+        "+86": "China",
+        "+91": "India",
+        "+61": "Australia",
+    }
 
-        country = "Unknown"
-        for code, name in country_codes.items():
-            if phone.startswith(code):
-                country = name
-                break
+    country = "Unknown"
+    for code, name in sorted(country_codes.items(), key=lambda item: len(item[0]), reverse=True):
+        if phone.startswith(code):
+            country = name
+            break
 
-        return {
-            "found": True,
-            "source": "Location",
-            "icon": "🌍",
-            "description": f"Estimated location: {country}",
-            "details": {
-                "Country": country,
-                "Region": "Based on country code",
-                "Precision": "Country-level",
-            },
-            "type": "location",
-            "priority": 70
-        }
-
-    except Exception as e:
-        print(f"Location info error: {e}")
-
-    return None
+    return {
+        "status": "info",
+        "source": "Country Code",
+        "icon": "🌍",
+        "description": f"Country-level information inferred from the country calling code: {country}.",
+        "details": {
+            "Country": country,
+            "Precision": "Country-level only",
+        },
+        "type": "inferred_location",
+        "priority": 15,
+    }
 
 
-async def _get_reputation(session: aiohttp.ClientSession, phone: str) -> Optional[Dict]:
-    """Get phone reputation/risk level"""
-    try:
-        return {
-            "found": True,
-            "source": "Phone Reputation",
-            "icon": "🛡️",
-            "description": f"Reputation check for {phone}",
-            "details": {
-                "Status": "Checking reputation databases",
-                "Risk Level": "Pending verification",
-                "Reports": "Available via reputation services",
-            },
-            "note": "Run reputation check against known spam/scam databases",
-            "type": "reputation",
-            "priority": 75
-        }
-
-    except Exception as e:
-        print(f"Reputation error: {e}")
-
-    return None
+def _manual_google_search(phone: str) -> Dict:
+    return {
+        "status": "manual",
+        "source": "Google Search",
+        "source_url": f"https://www.google.com/search?q=%22{quote(phone)}%22",
+        "icon": "🔍",
+        "description": "Open a manual web search for public mentions.",
+        "type": "web_search",
+        "priority": 50,
+    }
 
 
-async def _search_truecaller_real(session: aiohttp.ClientSession, phone: str) -> Optional[Dict]:
-    """Search TrueCaller"""
-    try:
-        return {
-            "found": True,
-            "source": "TrueCaller",
-            "source_url": f"https://www.truecaller.com/search?q={phone}",
-            "icon": "☎️",
-            "description": f"Search TrueCaller database for {phone}",
-            "details": {
-                "Database": "TrueCaller Global",
-                "Coverage": "Billions of numbers",
-                "Features": "ID, spam detection, reverse lookup",
-            },
-            "note": "TrueCaller app and web have extensive phone databases",
-            "type": "caller_id",
-            "priority": 90
-        }
-
-    except Exception as e:
-        print(f"TrueCaller error: {e}")
-
-    return None
+def _manual_truecaller_search(phone: str) -> Dict:
+    return {
+        "status": "manual",
+        "source": "Truecaller",
+        "source_url": f"https://www.truecaller.com/search?q={quote(phone)}",
+        "icon": "☎️",
+        "description": "Open a manual Truecaller search. TraceNova has not confirmed a match.",
+        "type": "caller_id",
+        "priority": 45,
+    }
