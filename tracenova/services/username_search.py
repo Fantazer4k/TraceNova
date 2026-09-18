@@ -5,7 +5,7 @@ Find public profiles across multiple platforms
 
 import asyncio
 import aiohttp
-import ssl
+import os
 from typing import Dict, List, Optional
 
 # List of platforms to search with their API endpoints
@@ -83,14 +83,7 @@ async def search_username(username: str) -> Dict:
 
     found_profiles = []
 
-    # Create SSL context to handle certificate issues on macOS
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-
-    connector = aiohttp.TCPConnector(ssl=ssl_context)
-
-    async with aiohttp.ClientSession(connector=connector) as session:
+    async with aiohttp.ClientSession() as session:
         tasks = []
 
         for platform, config in PLATFORMS.items():
@@ -128,24 +121,24 @@ async def _search_platform(session: aiohttp.ClientSession, platform: str, userna
         # You can set GITHUB_TOKEN env var for better rate limiting
         if platform == "github":
             headers["Accept"] = "application/vnd.github.v3+json"
+            github_token = os.getenv("GITHUB_TOKEN")
+            if github_token:
+                headers["Authorization"] = f"Bearer {github_token}"
 
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as response:
-            # For Instagram, TikTok, Telegram - just check if status is 200 (page exists)
-            if platform in ["instagram", "tiktok", "telegram"]:
-                if response.status == 200:
-                    return {
-                        "platform": platform,
-                        "username": username,
-                        "profile_url": profile_url,
-                        "found": True,
-                        "status": "verified"
-                    }
-                elif response.status == 404:
-                    return None
-                else:
-                    return None
+            # Some platforms do not expose a stable public endpoint here.
+        # A successful HTTP response is not enough to prove that a profile exists.
+        if platform in ["instagram", "tiktok", "telegram", "twitter", "stackoverflow", "pastebin"]:
+            return {
+                "platform": platform,
+                "username": username,
+                "profile_url": profile_url,
+                "found": False,
+                "status": "manual",
+                "message": "Manual verification required; HTTP status alone is not treated as proof."
+            }
 
-            # For API-based platforms
+        # For API-based platforms
             if response.status == 200:
                 try:
                     data = await response.json()
@@ -173,12 +166,12 @@ async def _search_platform(session: aiohttp.ClientSession, platform: str, userna
             "found": False,
             "error": "timeout"
         }
-    except Exception as e:
+    except Exception:
         return {
             "platform": platform,
             "username": username,
             "found": False,
-            "error": str(e)
+            "error": "request_failed"
         }
 
 
@@ -224,5 +217,5 @@ async def get_username_info(username: str, platform: str) -> Dict:
                     return await response.json()
                 else:
                     return {"error": f"Profile not found (status {response.status})"}
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        return {"error": "request_failed"}
