@@ -271,7 +271,6 @@ function displayResults(data) {
     if (data.email) {
         console.log('Email search result:', data);
 
-        // Handle error status
         if (data.status === "error") {
             resultContent.innerHTML = `
                 <div class="result-error">
@@ -283,80 +282,100 @@ function displayResults(data) {
             return;
         }
 
-        // Handle no results
-        if (data.status === "no_results" || !data.found_in_sources || data.found_in_sources.length === 0) {
-            resultContent.innerHTML = `
-                <div class="result-card">
-                    <h3>✓ Email Search Complete</h3>
-                    <div class="email-summary">
-                        <strong>Email:</strong> ${data.email}<br>
-                        <strong>Summary:</strong> ${data.summary || 'No public sources found'}
+        const sources = data.found_in_sources || [];
+        const checks = data.technical_checks || [];
+        const manual = data.manual_sources || [];
+
+        let sourcesHTML = sources.map(source => {
+            let badgeClass = 'source-badge';
+            if (source.type === 'security_alert') badgeClass += ' badge-alert';
+            if (source.type === 'verification') badgeClass += ' badge-verify';
+            if (source.type === 'real_search' || source.type === 'code_search') badgeClass += ' badge-search';
+
+            return `
+                <div class="email-source-item" data-type="${source.type || 'default'}">
+                    <div class="source-header">
+                        <span class="${badgeClass}">${source.icon || '•'} ${source.source}</span>
+                        ${source.warning ? `<span class="warning-badge">${source.warning}</span>` : ''}
+                    </div>
+                    <div class="source-content">
+                        <p class="source-description">${source.description || ''}</p>
+                        ${source.note ? `<p class="source-note">${source.note}</p>` : ''}
+
+                        ${source.profiles && source.profiles.length > 0 ? `
+                            <div class="github-profiles">
+                                ${source.profiles.map(p => `
+                                    <a href="${p.profile_url}" target="_blank" rel="noopener noreferrer" class="github-profile">
+                                        ${p.avatar ? `<img src="${p.avatar}" alt="" class="profile-avatar">` : ''}
+                                        <span>${p.username || 'Profile'}</span>
+                                    </a>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+
+                        ${source.breaches && source.breaches.length > 0 ? `
+                            <div class="breach-list">
+                                ${source.breaches.map(b => `<span class="breach-tag">${b}</span>`).join('')}
+                            </div>
+                        ` : ''}
+
+                        ${source.source_url ? `
+                            <a href="${source.source_url}" target="_blank" rel="noopener noreferrer" class="source-link">
+                                Learn more →
+                            </a>
+                        ` : ''}
                     </div>
                 </div>
             `;
-            return;
-        }
+        }).join('');
 
-        // Handle found sources
-        if (data.found_in_sources && data.found_in_sources.length > 0) {
-            let sourcesHTML = '';
+        let checksHTML = checks.map(check => `
+            <div class="result-item">
+                <strong>${check.source}:</strong>
+                <span>${check.description || check.status || 'Checked'}</span>
+            </div>
+        `).join('');
 
-            for (const source of data.found_in_sources) {
-                let badgeClass = 'source-badge';
-                if (source.type === 'security_alert') badgeClass += ' badge-alert';
-                if (source.type === 'verification') badgeClass += ' badge-verify';
-                if (source.type === 'real_search') badgeClass += ' badge-search';
+        let manualHTML = manual.map(source => `
+            <a href="${source.source_url}" target="_blank" rel="noopener noreferrer" class="source-link">
+                ${source.icon || '🔎'} ${source.source} →
+            </a>
+        `).join('');
 
-                sourcesHTML += `
-                    <div class="email-source-item" data-type="${source.type || 'default'}">
-                        <div class="source-header">
-                            <span class="${badgeClass}">${source.icon || '•'} ${source.source}</span>
-                            ${source.warning ? `<span class="warning-badge">${source.warning}</span>` : ''}
-                        </div>
-                        <div class="source-content">
-                            <p class="source-description">${source.description}</p>
-                            ${source.note ? `<p class="source-note">${source.note}</p>` : ''}
+        resultContent.innerHTML = `
+            <div class="result-card">
+                <h3>📧 ${data.email}</h3>
+                <p class="email-summary">${data.summary}</p>
 
-                            ${source.profiles && source.profiles.length > 0 ? `
-                                <div class="github-profiles">
-                                    ${source.profiles.map(p => `
-                                        <a href="${p.profile_url}" target="_blank" class="github-profile">
-                                            <img src="${p.avatar}" alt="${p.username}" class="profile-avatar">
-                                            <span>${p.username}</span>
-                                        </a>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-
-                            ${source.breaches && source.breaches.length > 0 ? `
-                                <div class="breach-list">
-                                    ${source.breaches.map(b => `
-                                        <span class="breach-tag">${b}</span>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-
-                            ${source.source_url ? `
-                                <a href="${source.source_url}" target="_blank" class="source-link">
-                                    ${source.type === 'alternative_tool' ? 'Visit' : 'Learn more'} →
-                                </a>
-                            ` : ''}
-                        </div>
-                    </div>
-                `;
-            }
-
-            resultContent.innerHTML = `
-                <div class="result-card">
-                    <h3>📧 ${data.email}</h3>
-                    <p class="email-summary">${data.summary}</p>
-                    <div class="email-sources-list">
-                        ${sourcesHTML}
-                    </div>
+                <div class="result-item">
+                    <strong>Format:</strong>
+                    <span>✓ Valid</span>
                 </div>
-            `;
-            return;
-        }
+                <div class="result-item">
+                    <strong>Domain:</strong>
+                    <span>${data.domain}</span>
+                </div>
+
+                ${sourcesHTML ? `
+                    <h4>Confirmed public sources</h4>
+                    <div class="email-sources-list">${sourcesHTML}</div>
+                ` : `
+                    <h4>No confirmed public-source matches</h4>
+                    <p class="source-note">This does not prove that the email is unused or invalid.</p>
+                `}
+
+                ${checksHTML ? `
+                    <h4>Technical checks</h4>
+                    <div class="technical-checks">${checksHTML}</div>
+                ` : ''}
+
+                ${manualHTML ? `
+                    <h4>Additional public-web searches</h4>
+                    <div class="manual-searches">${manualHTML}</div>
+                ` : ''}
+            </div>
+        `;
+        return;
     }
 
     // Default fallback
