@@ -1,6 +1,6 @@
 # TraceNova
 
-TraceNova is an OSINT and digital-intelligence learning project built with Python and FastAPI. It is designed to collect information from publicly available sources and present results through a simple web interface.
+TraceNova is an OSINT and digital-intelligence learning project built with Python and FastAPI. It is designed to collect legal information from publicly available sources and present results through a simple web interface.
 
 > **Educational / responsible use:** TraceNova is intended for learning, research, and defensive security work. Only investigate information you are authorized to access or information that is publicly available. Do not use it to harass, stalk, impersonate, or access private accounts.
 
