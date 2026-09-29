@@ -89,7 +89,9 @@ Respect the terms of service and applicable laws of every service you query.
 ## Status
 
 TraceNova is an experimental learning project and is under active development. Some integrations are prototypes and may require changes as third-party APIs and websites evolve.
+Be careful by using it
 
 ## License
 
 No license has been selected for this repository yet. Until a license is added, the source code should not be assumed to be freely reusable by others.
+
