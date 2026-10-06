@@ -72,11 +72,22 @@ async def search_email(email: str) -> Dict:
             elif result.get("status") == "manual":
                 manual_sources.append(result)
 
-    manual_sources.extend([
-        _manual_google_search(email),
-        _manual_social_search(email),
-    ])
+    # Use an API-backed search provider when configured. Otherwise keep manual links.
+    if os.getenv("BRAVE_SEARCH_API_KEY"):
+        async with aiohttp.ClientSession(timeout=timeout) as web_session:
+            web_result = await _search_public_web(web_session, email)
+        if web_result:
+            if web_result.get("found") is True:
+                found_sources.append(web_result)
+            elif web_result.get("category") == "technical":
+                technical_checks.append(web_result)
+    else:
+        manual_sources.extend([
+            _manual_google_search(email),
+            _manual_social_search(email),
+        ])
 
+    found_sources = _deduplicate_sources(found_sources)
     found_sources.sort(key=lambda item: item.get("priority", 0), reverse=True)
 
     breach_status = next(
@@ -399,6 +410,118 @@ async def _check_gravatar(session: aiohttp.ClientSession, email: str) -> Optiona
     except (aiohttp.ClientError, asyncio.TimeoutError):
         return None
     return None
+
+
+async def _search_public_web(
+    session: aiohttp.ClientSession,
+    email: str,
+) -> Optional[Dict]:
+    """Search indexed public web pages for an exact email mention."""
+    api_key = os.getenv("BRAVE_SEARCH_API_KEY")
+    if not api_key:
+        return None
+
+    url = "https://api.search.brave.com/res/v1/web/search"
+    headers = {
+        "Accept": "application/json",
+        "X-Subscription-Token": api_key,
+        "User-Agent": "TraceNova/1.0",
+    }
+    params = {
+        "q": f'"{email}"',
+        "count": 20,
+        "safesearch": "strict",
+    }
+
+    try:
+        async with session.get(url, headers=headers, params=params) as response:
+            if response.status != 200:
+                return {
+                    "category": "technical",
+                    "source": "Brave Search",
+                    "status": "unavailable",
+                    "description": f"Public web search returned HTTP {response.status}.",
+                }
+
+            data = await response.json()
+            results = data.get("web", {}).get("results", [])
+            matches = []
+            normalized_email = email.casefold()
+
+            for item in results:
+                title = item.get("title") or ""
+                result_url = item.get("url") or ""
+                description = item.get("description") or ""
+                combined = f"{title} {result_url} {description}".casefold()
+
+                if normalized_email not in combined:
+                    continue
+
+                matches.append({
+                    "title": title,
+                    "url": result_url,
+                    "snippet": description,
+                    "domain": _extract_domain(result_url),
+                })
+
+            if not matches:
+                return {
+                    "category": "technical",
+                    "source": "Brave Search",
+                    "status": "checked_no_match",
+                    "description": (
+                        "No indexed search result contained the exact email "
+                        "in its returned title, URL, or snippet."
+                    ),
+                }
+
+            return {
+                "found": True,
+                "source": "Public Web Search",
+                "source_url": "https://search.brave.com",
+                "icon": "🌐",
+                "description": (
+                    f"Found {len(matches)} indexed public result(s) whose returned "
+                    "metadata contains the exact email. This is public-web evidence, "
+                    "not proof of identity."
+                ),
+                "results": matches,
+                "type": "web_search",
+                "priority": 55,
+                "confidence": "low",
+            }
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return {
+            "category": "technical",
+            "source": "Brave Search",
+            "status": "unavailable",
+            "description": "Public web search could not be completed.",
+        }
+
+
+def _extract_domain(url: str) -> str:
+    """Return the hostname from a public result URL."""
+    match = re.match(r"^https?://([^/]+)", url, flags=re.IGNORECASE)
+    return match.group(1).lower() if match else ""
+
+
+def _deduplicate_sources(sources: List[Dict]) -> List[Dict]:
+    """Remove duplicate source records while preserving the first result."""
+    seen = set()
+    unique = []
+
+    for source in sources:
+        key = (
+            source.get("source"),
+            source.get("source_url"),
+            source.get("type"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(source)
+
+    return unique
 
 
 def _manual_google_search(email: str) -> Dict:
