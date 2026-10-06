@@ -18,6 +18,10 @@ from urllib.parse import quote
 import aiohttp
 
 EMAIL_REGEX = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+DNS_RESOLVERS = (
+    "https://cloudflare-dns.com/dns-query",
+    "https://dns.google/resolve",
+)
 
 
 async def search_email(email: str) -> Dict:
@@ -83,7 +87,7 @@ async def search_email(email: str) -> Dict:
     if found_sources:
         status = "success"
         summary = (
-            f"Found {len(found_sources)} confirmed public-source result(s). "
+            f"Found {len(found_sources)} public-source result(s). "
             f"Technical checks: {len(technical_checks)}."
         )
     else:
@@ -109,7 +113,7 @@ async def search_email(email: str) -> Dict:
 
 
 async def _search_github(session: aiohttp.ClientSession, email: str) -> Optional[Dict]:
-    """Find public GitHub accounts indexed against an email query."""
+    """Find public GitHub accounts returned by an email search query."""
     try:
         url = f"https://api.github.com/search/users?q={quote(email)}+in:email&per_page=10"
         headers = {
@@ -125,7 +129,8 @@ async def _search_github(session: aiohttp.ClientSession, email: str) -> Optional
                 return None
 
             data = await response.json()
-            if data.get("total_count", 0) <= 0:
+            total_count = data.get("total_count", 0)
+            if total_count <= 0:
                 return None
 
             return {
@@ -133,7 +138,10 @@ async def _search_github(session: aiohttp.ClientSession, email: str) -> Optional
                 "source": "GitHub",
                 "source_url": "https://github.com",
                 "icon": "🐙",
-                "description": f"Found {data.get('total_count')} public GitHub profile(s) matching the query.",
+                "description": (
+                    f"GitHub returned {total_count} public profile match(es) "
+                    "for this search query. A search match is not proof of identity."
+                ),
                 "profiles": [
                     {
                         "username": user.get("login"),
@@ -144,6 +152,7 @@ async def _search_github(session: aiohttp.ClientSession, email: str) -> Optional
                 ],
                 "type": "real_search",
                 "priority": 100,
+                "confidence": "medium",
             }
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return None
@@ -167,7 +176,8 @@ async def _search_github_code(session: aiohttp.ClientSession, email: str) -> Opt
                 return None
 
             data = await response.json()
-            if data.get("total_count", 0) <= 0:
+            total_count = data.get("total_count", 0)
+            if total_count <= 0:
                 return None
 
             return {
@@ -175,9 +185,12 @@ async def _search_github_code(session: aiohttp.ClientSession, email: str) -> Opt
                 "source": "GitHub Code",
                 "source_url": f"https://github.com/search?q={quote(chr(34) + email + chr(34))}&type=code",
                 "icon": "📄",
-                "description": f"Found {data.get('total_count')} public code result(s) containing the exact email.",
+                "description": (
+                    f"Found {total_count} public code result(s) containing the exact email."
+                ),
                 "type": "code_search",
                 "priority": 85,
+                "confidence": "medium",
             }
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return None
@@ -223,6 +236,7 @@ async def _check_hibp(session: aiohttp.ClientSession, email: str) -> Optional[Di
                     "breaches": [item.get("Name") for item in breaches],
                     "type": "security_alert",
                     "priority": 95,
+                    "confidence": "high",
                 }
 
             return {
@@ -273,6 +287,7 @@ async def _verify_email_zerobounce(
                     "description": f"ZeroBounce returned: {result_status}.",
                     "type": "verification",
                     "priority": 70,
+                    "confidence": "high",
                 }
 
             return {
@@ -294,54 +309,72 @@ async def _check_domain_mx(
     session: aiohttp.ClientSession,
     domain: str,
 ) -> Optional[Dict]:
-    """Check whether the email domain publishes MX records via DNS-over-HTTPS."""
-    try:
-        url = f"https://cloudflare-dns.com/dns-query?name={quote(domain)}&type=MX"
-        headers = {
-            "Accept": "application/dns-json",
-            "User-Agent": "TraceNova/1.0",
-        }
+    """Check whether the email domain publishes MX records via public DNS-over-HTTPS resolvers."""
+    last_error = "DNS lookup could not be completed."
 
-        async with session.get(url, headers=headers) as response:
-            if response.status != 200:
+    for resolver in DNS_RESOLVERS:
+        try:
+            if "cloudflare" in resolver:
+                url = f"{resolver}?name={quote(domain)}&type=MX"
+                headers = {
+                    "Accept": "application/dns-json",
+                    "User-Agent": "TraceNova/1.0",
+                }
+            else:
+                url = f"{resolver}?name={quote(domain)}&type=MX"
+                headers = {"User-Agent": "TraceNova/1.0"}
+
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    last_error = f"DNS resolver returned HTTP {response.status}."
+                    continue
+
+                data = await response.json()
+                status_code = data.get("Status")
+                if status_code not in (None, 0):
+                    last_error = f"DNS resolver returned status {status_code}."
+                    continue
+
+                answers = data.get("Answer", [])
+                mx_records = sorted(
+                    {
+                        answer.get("data")
+                        for answer in answers
+                        if answer.get("type") == 15 and answer.get("data")
+                    }
+                )
+
+                if mx_records:
+                    return {
+                        "category": "technical",
+                        "source": "DNS / MX",
+                        "status": "checked",
+                        "description": "The email domain publishes MX records.",
+                        "details": {
+                            "domain": domain,
+                            "mx_records": mx_records,
+                            "resolver": resolver,
+                        },
+                    }
+
                 return {
                     "category": "technical",
                     "source": "DNS / MX",
-                    "status": "unavailable",
-                    "description": f"DNS lookup returned HTTP {response.status}.",
+                    "status": "no_mx",
+                    "description": "No MX record was returned for this domain.",
+                    "details": {"domain": domain, "resolver": resolver},
                 }
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            last_error = f"DNS resolver unavailable: {type(exc).__name__}."
+            continue
 
-            data = await response.json()
-            answers = data.get("Answer", [])
-            mx_records = [
-                answer.get("data")
-                for answer in answers
-                if answer.get("type") == 15 and answer.get("data")
-            ]
-
-            if mx_records:
-                return {
-                    "category": "technical",
-                    "source": "DNS / MX",
-                    "status": "checked",
-                    "description": "The email domain publishes MX records.",
-                    "details": {"domain": domain, "mx_records": ", ".join(mx_records)},
-                }
-
-            return {
-                "category": "technical",
-                "source": "DNS / MX",
-                "status": "no_mx",
-                "description": "No MX record was returned for this domain.",
-                "details": {"domain": domain},
-            }
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-        return {
-            "category": "technical",
-            "source": "DNS / MX",
-            "status": "unavailable",
-            "description": "DNS lookup could not be completed.",
-        }
+    return {
+        "category": "technical",
+        "source": "DNS / MX",
+        "status": "unavailable",
+        "description": last_error,
+        "details": {"domain": domain},
+    }
 
 
 async def _check_gravatar(session: aiohttp.ClientSession, email: str) -> Optional[Dict]:
@@ -360,6 +393,7 @@ async def _check_gravatar(session: aiohttp.ClientSession, email: str) -> Optiona
                     "description": "A public Gravatar image was found for this email hash.",
                     "type": "public_profile",
                     "priority": 60,
+                    "confidence": "medium",
                     "note": "This is evidence of a public avatar association, not proof of identity.",
                 }
     except (aiohttp.ClientError, asyncio.TimeoutError):
