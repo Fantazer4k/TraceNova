@@ -814,3 +814,44 @@ body {
         gap: 12px;
     }
 }
+
+
+/* Public web results returned by the optional search provider */
+.public-web-results {
+    display: grid;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.public-web-result {
+    padding: 14px 16px;
+    border: 1px solid var(--frost-border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.public-web-result h4 {
+    margin: 0 0 6px;
+    font-size: 15px;
+}
+
+.public-web-result h4 a {
+    color: var(--void-violet);
+    text-decoration: none;
+}
+
+.public-web-result h4 a:hover {
+    text-decoration: underline;
+}
+
+.public-web-result p {
+    margin: 6px 0;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.public-web-result .public-web-domain {
+    color: var(--frost-glow);
+    font-size: 12px;
+    opacity: 0.8;
+}
