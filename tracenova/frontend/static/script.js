@@ -1,3 +1,23 @@
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    })[char]);
+}
+
+function safeExternalUrl(value) {
+    try {
+        const url = new URL(String(value || ''));
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+        return escapeHtml(url.href);
+    } catch {
+        return '';
+    }
+}
+
 const analyzeBtn = document.getElementById('analyzeBtn');
 const queryInput = document.getElementById('queryInput');
 const queryType = document.getElementById('queryType');
@@ -244,7 +264,18 @@ function displayResults(data) {
                                 </div>
                             ` : ''}
 
-                            ${source.source_url ? `
+                            ${source.results && source.results.length > 0 ? '<div class="public-web-results">' + source.results.map(result => {
+                            const resultUrl = safeExternalUrl(result.url);
+                            const title = escapeHtml(result.title || result.domain || 'Public web result');
+                            return '<article class="public-web-result">' +
+                                '<h4>' + (resultUrl ? '<a href="' + resultUrl + '" target="_blank" rel="noopener noreferrer">' + title + '</a>' : title) + '</h4>' +
+                                (result.domain ? '<p class="public-web-domain">' + escapeHtml(result.domain) + '</p>' : '') +
+                                (result.snippet ? '<p>' + escapeHtml(result.snippet) + '</p>' : '') +
+                                (resultUrl ? '<a class="source-link" href="' + resultUrl + '" target="_blank" rel="noopener noreferrer">Open page →</a>' : '') +
+                                '</article>';
+                        }).join('') + '</div>' : ''}
+
+                        ${source.source_url ? `
                                 <a href="${source.source_url}" target="_blank" class="source-link">
                                     Learn more →
                                 </a>
