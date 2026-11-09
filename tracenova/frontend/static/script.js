@@ -35,7 +35,7 @@ const helpContent = {
     },
     url: {
         title: "URL Search",
-        text: "Enter a full URL (e.g., https://example.com/page) to analyze the website and extract metadata, headers, and page information."
+        text: "Enter a full URL (e.g., https://example.com/page) to inspect its hostname, public DNS addresses, and HTTPS/TLS certificate. Page content is not fetched."
     },
     ip: {
         title: "IP Address Search",
@@ -129,7 +129,7 @@ function displayResults(data) {
     resultsSection.classList.remove('hidden');
 
     // Handle errors
-    if (data.status === "error") {
+    if (data.status === "error" && data.query_type !== "url") {
         resultContent.innerHTML = `
             <div class="result-error">
                 <h3>❌ Analysis Failed</h3>
