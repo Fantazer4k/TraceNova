@@ -107,11 +107,18 @@ async function analyze() {
     analyzeBtn.textContent = 'Analyzing...';
 
     try {
-        const response = await fetch(`/api/analyze?query=${query}&query_type=${type}`);
+        const params = new URLSearchParams({ query, query_type: type });
+        const response = await fetch(`/api/analyze?${params.toString()}`);
         const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.detail || `Request failed (HTTP ${response.status})`);
+        }
+
         displayResults(data);
     } catch (error) {
-        resultContent.innerHTML = `<p>Error: ${error.message}</p>`;
+        resultsSection.classList.remove('hidden');
+        resultContent.innerHTML = `<div class="result-error"><h3>Analysis failed</h3><p>${escapeHtml(error.message)}</p></div>`;
     } finally {
         analyzeBtn.disabled = false;
         analyzeBtn.textContent = 'Analyze';
@@ -128,6 +135,57 @@ function displayResults(data) {
                 <h3>❌ Analysis Failed</h3>
                 <p><strong>Query:</strong> ${data.domain || data.username || data.query}</p>
                 <p><strong>Error:</strong> ${data.message}</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Handle URL analysis
+    if (data.query_type === "url") {
+        if (data.status !== "success") {
+            resultContent.innerHTML = `
+                <div class="result-error">
+                    <h3>URL analysis failed</h3>
+                    <p><strong>URL:</strong> ${escapeHtml(data.url || '')}</p>
+                    <p>${escapeHtml(data.message || 'The URL could not be analysed.')}</p>
+                </div>
+            `;
+            return;
+        }
+
+        const ipsHTML = (data.resolved_ips || []).map(ip =>
+            `<span class="ip-address">${escapeHtml(ip)}</span>`
+        ).join(' ');
+
+        const tlsHTML = data.scheme === 'https' ? `
+            <div class="result-item">
+                <strong>TLS:</strong>
+                <span>${escapeHtml(data.tls?.status || 'unknown')}</span>
+            </div>
+            ${data.tls?.version ? `
+                <div class="result-item"><strong>TLS version:</strong><span>${escapeHtml(data.tls.version)}</span></div>
+            ` : ''}
+            ${data.tls?.expires ? `
+                <div class="result-item"><strong>Certificate expires:</strong><span>${escapeHtml(data.tls.expires)}</span></div>
+            ` : ''}
+            ${data.tls?.message ? `
+                <p class="source-note">${escapeHtml(data.tls.message)}</p>
+            ` : ''}
+        ` : `
+            <div class="result-item"><strong>TLS:</strong><span>Not applicable (HTTP)</span></div>
+        `;
+
+        resultContent.innerHTML = `
+            <div class="result-card">
+                <h3>URL analysis complete</h3>
+                <div class="result-item"><strong>URL:</strong><span>${escapeHtml(data.url)}</span></div>
+                <div class="result-item"><strong>Hostname:</strong><span>${escapeHtml(data.hostname)}</span></div>
+                <div class="result-item"><strong>Scheme:</strong><span>${escapeHtml(data.scheme)}</span></div>
+                <div class="result-item"><strong>Port:</strong><span>${escapeHtml(data.port)}</span></div>
+                <div class="result-item"><strong>Path:</strong><span>${escapeHtml(data.path)}</span></div>
+                <div class="result-item"><strong>Resolved IP addresses:</strong><span>${ipsHTML || 'None'}</span></div>
+                ${tlsHTML}
+                <p class="result-message">${escapeHtml(data.message)}</p>
             </div>
         `;
         return;
