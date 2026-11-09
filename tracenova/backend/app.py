@@ -15,6 +15,7 @@ from services.email_search import search_email
 from services.ip_resolver import get_additional_ip_info, resolve_domain_to_ip
 from services.phone_search import search_phone
 from services.username_search import search_username
+from services.url_analyzer import analyze_url
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -56,6 +57,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="Query too short")
 
         try:
+            if query_type == "url":
+                return await analyze_url(query)
+
             if query_type == "domain":
                 result = await resolve_domain_to_ip(query)
 
