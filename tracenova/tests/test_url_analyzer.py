@@ -55,6 +55,20 @@ class URLAnalyzerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _resolve_public_addresses("internal.example", 80)
 
+    @patch("services.url_analyzer._resolve_with_doh", return_value=["93.184.216.34"])
+    @patch("services.url_analyzer.socket.getaddrinfo", side_effect=__import__("socket").gaierror("DNS unavailable"))
+    def test_doh_fallback_is_used_when_system_dns_fails(self, _getaddrinfo, doh):
+        addresses = _resolve_public_addresses("example.com", 443)
+
+        self.assertEqual(addresses, ["93.184.216.34"])
+        doh.assert_called_once_with("example.com")
+
+    @patch("services.url_analyzer._resolve_with_doh", return_value=["10.0.0.5"])
+    @patch("services.url_analyzer.socket.getaddrinfo", side_effect=__import__("socket").gaierror("DNS unavailable"))
+    def test_doh_private_destination_is_still_blocked(self, _getaddrinfo, _doh):
+        with self.assertRaises(ValueError):
+            _resolve_public_addresses("internal.example", 443)
+
 
 if __name__ == "__main__":
     unittest.main()
