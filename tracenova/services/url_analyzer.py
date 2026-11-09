@@ -8,9 +8,58 @@ redirects, avoiding arbitrary HTTP requests from the server.
 
 import asyncio
 import ipaddress
+import json
 import socket
 import ssl
-from urllib.parse import urlsplit
+from urllib.error import URLError
+from urllib.parse import urlencode, urlsplit
+from urllib.request import Request, urlopen
+
+
+_DOH_ENDPOINTS = (
+    "https://cloudflare-dns.com/dns-query",
+    "https://dns.google/resolve",
+)
+_DOH_TIMEOUT_SECONDS = 3
+
+
+def _resolve_with_doh(hostname: str) -> list[str]:
+    """Resolve A/AAAA records over HTTPS when the system DNS resolver fails."""
+    addresses = []
+
+    for record_type in ("A", "AAAA"):
+        for endpoint in _DOH_ENDPOINTS:
+            params = urlencode({"name": hostname, "type": record_type})
+            separator = "&" if "?" in endpoint else "?"
+            request = Request(
+                f"{endpoint}{separator}{params}",
+                headers={"Accept": "application/dns-json", "User-Agent": "TraceNova/1.0"},
+            )
+            try:
+                with urlopen(request, timeout=_DOH_TIMEOUT_SECONDS) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if payload.get("Status") != 0:
+                    continue
+
+                expected_version = 4 if record_type == "A" else 6
+                for answer in payload.get("Answer", []):
+                    if answer.get("type") != (1 if record_type == "A" else 28):
+                        continue
+                    try:
+                        address = ipaddress.ip_address(answer.get("data", ""))
+                    except ValueError:
+                        continue
+                    if address.version == expected_version:
+                        addresses.append(str(address))
+                if any(
+                    ipaddress.ip_address(address).version == expected_version
+                    for address in addresses
+                ):
+                    break
+            except (OSError, URLError, ValueError, json.JSONDecodeError):
+                continue
+
+    return list(dict.fromkeys(addresses))
 
 
 def _resolve_public_addresses(hostname: str, port: int) -> list[str]:
@@ -19,16 +68,19 @@ def _resolve_public_addresses(hostname: str, port: int) -> list[str]:
         literal_ip = ipaddress.ip_address(hostname)
         addresses = [str(literal_ip)]
     except ValueError:
-        records = socket.getaddrinfo(
-            hostname,
-            port,
-            family=socket.AF_UNSPEC,
-            type=socket.SOCK_STREAM,
-        )
-        addresses = list(dict.fromkeys(record[4][0] for record in records))
+        try:
+            records = socket.getaddrinfo(
+                hostname,
+                port,
+                family=socket.AF_UNSPEC,
+                type=socket.SOCK_STREAM,
+            )
+            addresses = list(dict.fromkeys(record[4][0] for record in records))
+        except socket.gaierror:
+            addresses = _resolve_with_doh(hostname)
 
     if not addresses:
-        raise ValueError("The hostname did not resolve to any IP addresses.")
+        raise socket.gaierror("No A or AAAA records were returned by the DNS resolvers.")
 
     parsed = [ipaddress.ip_address(address) for address in addresses]
     if any(not address.is_global for address in parsed):
