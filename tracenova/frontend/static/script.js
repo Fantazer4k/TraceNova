@@ -31,7 +31,7 @@ const closeHelp = document.getElementById('closeHelp');
 const helpContent = {
     domain: {
         title: "Domain Search",
-        text: "Enter a domain name (e.g., example.com) to get comprehensive information about the website, including IP address, hosting provider, SSL certificate, technologies used, and security details."
+        text: "Enter a domain name to resolve its IPv4 address and available reverse DNS data. This is not a full website security audit."
     },
     url: {
         title: "URL Search",
@@ -39,19 +39,19 @@ const helpContent = {
     },
     ip: {
         title: "IP Address Search",
-        text: "Enter an IP address (e.g., 192.168.1.1) to discover hosting information, geolocation, ASN details, and associated domains."
+        text: "Enter an IPv4 or IPv6 address to check public/private status, reverse DNS, network registration, and approximate ASN/location when providers are available. This does not identify a person or all domains on an IP."
     },
     username: {
         title: "Username Search",
-        text: "Enter a username to find public profiles across social media platforms, GitHub, and other services where this username appears."
+        text: "Check matching usernames using public structured APIs (GitHub, GitLab, Reddit, Bluesky and others). Instagram, TikTok, X and Telegram are candidate links for manual checking, not verified accounts."
     },
     email: {
         title: "Email Search",
-        text: "Enter an email address to find where it appears publicly - data breaches, GitHub profiles, social media, and other internet sources."
+        text: "Check the configured public email-related sources and technical signals. A missing match does not prove an email address is unused; not all social sites support email search."
     },
     phone: {
         title: "Phone Number Search",
-        text: "Enter a phone number to get comprehensive information including country, carrier, type (mobile/landline), location, and data breach history."
+        text: "Enter a phone number in international format to check numbering-plan validity, inferred region and original carrier, plus manual public-web links. No phone breach lookup is performed."
     }
 };
 
@@ -89,7 +89,7 @@ queryType.addEventListener('change', () => {
         ip: '8.8.8.8',
         username: 'username',
         email: 'email@example.com',
-        phone: '+1-555-0123'
+        phone: '+353851234567'
     };
     queryInput.placeholder = placeholders[type] || 'Enter search query...';
 });
@@ -107,8 +107,11 @@ async function analyze() {
     analyzeBtn.textContent = 'Analyzing...';
 
     try {
-        const params = new URLSearchParams({ query, query_type: type });
-        const response = await fetch(`/api/analyze?${params.toString()}`);
+        const response = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, query_type: type })
+        });
         const data = await response.json();
 
         if (!response.ok) {
@@ -125,354 +128,188 @@ async function analyze() {
     }
 }
 
+// Every value from the API is untrusted. Build HTML only through these helpers.
+function valueText(value) {
+    if (value === null || value === undefined) return '';
+    if (Array.isArray(value)) return value.map(valueText).join(', ');
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+}
+
+function field(label, value) {
+    if (value === null || value === undefined || value === '') return '';
+    return '<div class="result-item"><strong>' + escapeHtml(label) +
+        ':</strong><span>' + escapeHtml(valueText(value)) + '</span></div>';
+}
+
+function externalLink(url, label, cssClass) {
+    const href = safeExternalUrl(url);
+    if (!href) return '';
+    const cls = cssClass === 'profile-link' ? 'profile-link' : 'source-link';
+    return '<a href="' + href + '" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="' +
+        cls + '">' + escapeHtml(label || url) + '</a>';
+}
+
+function errorCard(title, value, message) {
+    return '<div class="result-error"><h3>' + escapeHtml(title) + '</h3>' +
+        (value ? field('Query', value) : '') +
+        '<p>' + escapeHtml(message || 'The analysis could not be completed.') + '</p></div>';
+}
+
+function detailsMarkup(details) {
+    if (!details || typeof details !== 'object' || Array.isArray(details)) return '';
+    return '<div class="details-grid">' + Object.entries(details).map(([key, value]) =>
+        '<div class="detail-item"><span class="detail-key">' + escapeHtml(key) +
+        ':</span><span class="detail-value">' + escapeHtml(valueText(value)) +
+        '</span></div>'
+    ).join('') + '</div>';
+}
+
+function sourceCard(source) {
+    if (!source || typeof source !== 'object') return '';
+    const profiles = Array.isArray(source.profiles) ? source.profiles : [];
+    const breaches = Array.isArray(source.breaches) ? source.breaches : [];
+    const webResults = Array.isArray(source.results) ? source.results : [];
+    const profileHtml = profiles.map(p => {
+        const avatar = safeExternalUrl(p.avatar);
+        const avatarHtml = avatar ? '<img src="' + avatar + '" alt="" class="profile-avatar" referrerpolicy="no-referrer">' : '';
+        return '<div class="github-profile">' + avatarHtml +
+            externalLink(p.profile_url, p.username || 'Public profile', 'profile-link') + '</div>';
+    }).join('');
+    return '<div class="email-source-item"><div class="source-header"><span class="source-badge">' +
+        escapeHtml(source.icon || '•') + ' ' + escapeHtml(source.source || source.platform || 'Source') +
+        '</span></div><div class="source-content">' +
+        (source.description ? '<p class="source-description">' + escapeHtml(source.description) + '</p>' : '') +
+        (source.note ? '<p class="source-note">' + escapeHtml(source.note) + '</p>' : '') +
+        detailsMarkup(source.details) + profileHtml +
+        (breaches.length ? '<div class="breach-list">' + breaches.map(b =>
+            '<span class="breach-tag">' + escapeHtml(valueText(b)) + '</span>').join('') + '</div>' : '') +
+        webResults.map(r => '<article class="public-web-result">' +
+            externalLink(r.url, r.title || r.domain || 'Public page') +
+            (r.snippet ? '<p>' + escapeHtml(r.snippet) + '</p>' : '') + '</article>').join('') +
+        externalLink(source.source_url, 'Open source') + '</div></div>';
+}
+
+function section(title, content) {
+    return content ? '<h4>' + escapeHtml(title) + '</h4><div class="email-sources-list">' + content + '</div>' : '';
+}
+
+function manualLinks(items, urlField) {
+    return (Array.isArray(items) ? items : []).map(m =>
+        '<div class="profile-item">' +
+        externalLink(m[urlField] || m.source_url, m.platform || m.source || 'Manual lookup', 'profile-link') +
+        '<span class="source-note"> — Manual check, not a verified match</span></div>'
+    ).join('');
+}
+
 function displayResults(data) {
     resultsSection.classList.remove('hidden');
-
-    // Handle errors
-    if (data.status === "error" && data.query_type !== "url") {
-        resultContent.innerHTML = `
-            <div class="result-error">
-                <h3>❌ Analysis Failed</h3>
-                <p><strong>Query:</strong> ${data.domain || data.username || data.query}</p>
-                <p><strong>Error:</strong> ${data.message}</p>
-            </div>
-        `;
+    if (!data || typeof data !== 'object') {
+        resultContent.innerHTML = errorCard('Invalid response', '', 'The server did not return valid data.');
+        return;
+    }
+    const kind = data.query_type || queryType.value;
+    if (data.status === 'error') {
+        resultContent.innerHTML = errorCard('Analysis failed',
+            data.url || data.domain || data.username || data.email || data.phone ||
+            data.ip_address || data.query || '', data.message);
         return;
     }
 
-    // Handle URL analysis
-    if (data.query_type === "url") {
-        if (data.status !== "success") {
-            resultContent.innerHTML = `
-                <div class="result-error">
-                    <h3>URL analysis failed</h3>
-                    <p><strong>URL:</strong> ${escapeHtml(data.url || '')}</p>
-                    <p>${escapeHtml(data.message || 'The URL could not be analysed.')}</p>
-                </div>
-            `;
-            return;
-        }
-
-        const ipsHTML = (data.resolved_ips || []).map(ip =>
-            `<span class="ip-address">${escapeHtml(ip)}</span>`
-        ).join(' ');
-
-        const tlsHTML = data.scheme === 'https' ? `
-            <div class="result-item">
-                <strong>TLS:</strong>
-                <span>${escapeHtml(data.tls?.status || 'unknown')}</span>
-            </div>
-            ${data.tls?.version ? `
-                <div class="result-item"><strong>TLS version:</strong><span>${escapeHtml(data.tls.version)}</span></div>
-            ` : ''}
-            ${data.tls?.expires ? `
-                <div class="result-item"><strong>Certificate expires:</strong><span>${escapeHtml(data.tls.expires)}</span></div>
-            ` : ''}
-            ${data.tls?.message ? `
-                <p class="source-note">${escapeHtml(data.tls.message)}</p>
-            ` : ''}
-        ` : `
-            <div class="result-item"><strong>TLS:</strong><span>Not applicable (HTTP)</span></div>
-        `;
-
-        resultContent.innerHTML = `
-            <div class="result-card">
-                <h3>URL analysis complete</h3>
-                <div class="result-item"><strong>URL:</strong><span>${escapeHtml(data.url)}</span></div>
-                <div class="result-item"><strong>Hostname:</strong><span>${escapeHtml(data.hostname)}</span></div>
-                <div class="result-item"><strong>Scheme:</strong><span>${escapeHtml(data.scheme)}</span></div>
-                <div class="result-item"><strong>Port:</strong><span>${escapeHtml(data.port)}</span></div>
-                <div class="result-item"><strong>Path:</strong><span>${escapeHtml(data.path)}</span></div>
-                <div class="result-item"><strong>Resolved IP addresses:</strong><span>${ipsHTML || 'None'}</span></div>
-                ${tlsHTML}
-                <p class="result-message">${escapeHtml(data.message)}</p>
-            </div>
-        `;
+    if (kind === 'url') {
+        const tls = data.tls || {};
+        resultContent.innerHTML = '<div class="result-card"><h3>URL analysis</h3>' +
+            field('URL', data.url) + field('Hostname', data.hostname) +
+            field('Scheme', data.scheme) + field('Port', data.port) +
+            field('Path', data.path) + field('Resolved IPs', data.resolved_ips) +
+            field('TLS status', data.scheme === 'https' ? (tls.status || 'unknown') : 'Not applicable (HTTP)') +
+            field('TLS version', tls.version) + field('Certificate expiry', tls.expires) +
+            field('TLS note', tls.message) + field('Summary', data.message) + '</div>';
         return;
     }
 
-    // Handle IP Address (Domain) search
-    if (data.ip_address) {
-        resultContent.innerHTML = `
-            <div class="result-card">
-                <h3>✅ ${data.domain}</h3>
-
-                <div class="result-item">
-                    <strong>IP Address:</strong>
-                    <span class="ip-address">${data.ip_address}</span>
-                </div>
-
-                ${data.ip_info && data.ip_info.reverse_dns !== "N/A" ? `
-                    <div class="result-item">
-                        <strong>Reverse DNS:</strong>
-                        <span>${data.ip_info.reverse_dns}</span>
-                    </div>
-                ` : ''}
-
-                <p class="result-message">${data.message}</p>
-            </div>
-        `;
+    if (kind === 'ip') {
+        const ip = data.ip_info || {};
+        resultContent.innerHTML = '<div class="result-card"><h3>IP Address Analysis</h3>' +
+            field('IP', data.ip_address) + field('Version', data.ip_version) +
+            field('Address classification', ip.address_type) +
+            field('Reverse DNS', ip.reverse_dns) +
+            field('Registered network', ip.network_name) +
+            field('Registry country', ip.network_country) +
+            field('Registered IP range', ip.network_range) +
+            field('ASN', ip.asn) + field('ISP', ip.isp) +
+            field('Approximate country', ip.geo_country) +
+            field('Approximate region', ip.geo_region) +
+            field('Approximate city', ip.geo_city) +
+            field('Registry source', ip.registry_source) +
+            field('Approximate location source', ip.geolocation_source) +
+            field('Registry note', ip.registry_note) +
+            field('Geolocation note', ip.geolocation_note) +
+            '<p class="source-note">Approximate IP geolocation is not a precise physical location.</p>' +
+            field('Summary', data.message) + '</div>';
         return;
     }
 
-    // Handle Username search
-    if (data.profiles !== undefined) {
-        if (data.profiles_found === 0) {
-            resultContent.innerHTML = `
-                <div class="result-card">
-                    <h3>ℹ️ No profiles found</h3>
-                    <p>No public profiles found with username <strong>"${data.username}"</strong></p>
-                </div>
-            `;
-            return;
-        }
-
-        let profilesHTML = data.profiles.map(profile => `
-            <div class="profile-item">
-                <div class="profile-header">
-                    <span class="platform-badge">${profile.platform}</span>
-                    <span class="status-badge ${profile.found ? 'found' : 'not-found'}">
-                        ${profile.found ? '✓ Found' : '✗ Not Found'}
-                    </span>
-                </div>
-                ${profile.profile_url ? `
-                    <a href="${profile.profile_url}" target="_blank" class="profile-link">
-                        ${profile.profile_url}
-                    </a>
-                ` : ''}
-                ${profile.error ? `<p class="error-text">${profile.error}</p>` : ''}
-            </div>
-        `).join('');
-
-        resultContent.innerHTML = `
-            <div class="result-card">
-                <h3>🔍 "${data.username}" - Found ${data.profiles_found} profile(s)</h3>
-                <div class="profiles-list">
-                    ${profilesHTML}
-                </div>
-                <p class="result-message">${data.message}</p>
-            </div>
-        `;
+    if (kind === 'domain') {
+        const ip = data.ip_info || {};
+        resultContent.innerHTML = '<div class="result-card"><h3>Domain DNS Analysis</h3>' +
+            field('Domain', data.domain) + field('IPv4 address', data.ip_address) +
+            field('Reverse DNS', ip.reverse_dns) +
+            field('Summary', data.message) + '</div>';
         return;
     }
 
-    // Handle Phone search
-    if (data.phone) {
-        console.log('Phone search result:', data);
-
-        if (data.status === "error") {
-            resultContent.innerHTML = `
-                <div class="result-error">
-                    <h3>❌ Invalid Phone</h3>
-                    <p><strong>Phone:</strong> ${data.phone}</p>
-                    <p><strong>Error:</strong> ${data.message}</p>
-                </div>
-            `;
-            return;
-        }
-
-        if (data.status === "no_results" || !data.found_in_sources || data.found_in_sources.length === 0) {
-            resultContent.innerHTML = `
-                <div class="result-card">
-                    <h3>✓ Phone Search Complete</h3>
-                    <div class="email-summary">
-                        <strong>Phone:</strong> ${data.phone}<br>
-                        <strong>Summary:</strong> ${data.summary || 'No results found'}
-                    </div>
-                </div>
-            `;
-            return;
-        }
-
-        if (data.found_in_sources && data.found_in_sources.length > 0) {
-            let sourcesHTML = '';
-
-            for (const source of data.found_in_sources) {
-                let badgeClass = 'source-badge';
-                if (source.type === 'security_alert') badgeClass += ' badge-alert';
-                if (source.type === 'verification') badgeClass += ' badge-verify';
-                if (source.type === 'real_search') badgeClass += ' badge-search';
-
-                sourcesHTML += `
-                    <div class="email-source-item" data-type="${source.type || 'default'}">
-                        <div class="source-header">
-                            <span class="${badgeClass}">${source.icon || '•'} ${source.source}</span>
-                            ${source.warning ? `<span class="warning-badge">${source.warning}</span>` : ''}
-                        </div>
-                        <div class="source-content">
-                            <p class="source-description">${source.description}</p>
-                            ${source.note ? `<p class="source-note">${source.note}</p>` : ''}
-
-                            ${source.details ? `
-                                <div class="details-grid">
-                                    ${Object.entries(source.details).map(([key, value]) => `
-                                        <div class="detail-item">
-                                            <span class="detail-key">${key}:</span>
-                                            <span class="detail-value">${value}</span>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-
-                            ${source.breaches && source.breaches.length > 0 ? `
-                                <div class="breach-list">
-                                    ${source.breaches.map(b => `
-                                        <span class="breach-tag">${b}</span>
-                                    `).join('')}
-                                </div>
-                            ` : ''}
-
-                            ${source.results && source.results.length > 0 ? '<div class="public-web-results">' + source.results.map(result => {
-                            const resultUrl = safeExternalUrl(result.url);
-                            const title = escapeHtml(result.title || result.domain || 'Public web result');
-                            return '<article class="public-web-result">' +
-                                '<h4>' + (resultUrl ? '<a href="' + resultUrl + '" target="_blank" rel="noopener noreferrer">' + title + '</a>' : title) + '</h4>' +
-                                (result.domain ? '<p class="public-web-domain">' + escapeHtml(result.domain) + '</p>' : '') +
-                                (result.snippet ? '<p>' + escapeHtml(result.snippet) + '</p>' : '') +
-                                (resultUrl ? '<a class="source-link" href="' + resultUrl + '" target="_blank" rel="noopener noreferrer">Open page →</a>' : '') +
-                                '</article>';
-                        }).join('') + '</div>' : ''}
-
-                        ${source.source_url ? `
-                                <a href="${source.source_url}" target="_blank" class="source-link">
-                                    Learn more →
-                                </a>
-                            ` : ''}
-                        </div>
-                    </div>
-                `;
-            }
-
-            resultContent.innerHTML = `
-                <div class="result-card">
-                    <h3>☎️ ${data.phone}</h3>
-                    <p class="email-summary">${data.summary}</p>
-                    <div class="email-sources-list">
-                        ${sourcesHTML}
-                    </div>
-                </div>
-            `;
-            return;
-        }
-    }
-
-    // Handle Email search
-    if (data.email) {
-        console.log('Email search result:', data);
-
-        if (data.status === "error") {
-            resultContent.innerHTML = `
-                <div class="result-error">
-                    <h3>❌ Invalid Email</h3>
-                    <p><strong>Email:</strong> ${data.email}</p>
-                    <p><strong>Error:</strong> ${data.message}</p>
-                </div>
-            `;
-            return;
-        }
-
-        const sources = data.found_in_sources || [];
-        const checks = data.technical_checks || [];
-        const manual = data.manual_sources || [];
-
-        let sourcesHTML = sources.map(source => {
-            let badgeClass = 'source-badge';
-            if (source.type === 'security_alert') badgeClass += ' badge-alert';
-            if (source.type === 'verification') badgeClass += ' badge-verify';
-            if (source.type === 'real_search' || source.type === 'code_search') badgeClass += ' badge-search';
-
-            return `
-                <div class="email-source-item" data-type="${source.type || 'default'}">
-                    <div class="source-header">
-                        <span class="${badgeClass}">${source.icon || '•'} ${source.source}</span>
-                        ${source.warning ? `<span class="warning-badge">${source.warning}</span>` : ''}
-                    </div>
-                    <div class="source-content">
-                        <p class="source-description">${source.description || ''}</p>
-                        ${source.note ? `<p class="source-note">${source.note}</p>` : ''}
-
-                        ${source.profiles && source.profiles.length > 0 ? `
-                            <div class="github-profiles">
-                                ${source.profiles.map(p => `
-                                    <a href="${p.profile_url}" target="_blank" rel="noopener noreferrer" class="github-profile">
-                                        ${p.avatar ? `<img src="${p.avatar}" alt="" class="profile-avatar">` : ''}
-                                        <span>${p.username || 'Profile'}</span>
-                                    </a>
-                                `).join('')}
-                            </div>
-                        ` : ''}
-
-                        ${source.breaches && source.breaches.length > 0 ? `
-                            <div class="breach-list">
-                                ${source.breaches.map(b => `<span class="breach-tag">${b}</span>`).join('')}
-                            </div>
-                        ` : ''}
-
-                        ${source.source_url ? `
-                            <a href="${source.source_url}" target="_blank" rel="noopener noreferrer" class="source-link">
-                                Learn more →
-                            </a>
-                        ` : ''}
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        let checksHTML = checks.map(check => `
-            <div class="result-item">
-                <strong>${check.source}:</strong>
-                <span>${check.description || check.status || 'Checked'}</span>
-            </div>
-        `).join('');
-
-        let manualHTML = manual.map(source => `
-            <a href="${source.source_url}" target="_blank" rel="noopener noreferrer" class="source-link">
-                ${source.icon || '🔎'} ${source.source} →
-            </a>
-        `).join('');
-
-        resultContent.innerHTML = `
-            <div class="result-card">
-                <h3>📧 ${data.email}</h3>
-                <p class="email-summary">${data.summary}</p>
-
-                <div class="result-item">
-                    <strong>Format:</strong>
-                    <span>✓ Valid</span>
-                </div>
-                <div class="result-item">
-                    <strong>Domain:</strong>
-                    <span>${data.domain}</span>
-                </div>
-
-                ${sourcesHTML ? `
-                    <h4>Confirmed public sources</h4>
-                    <div class="email-sources-list">${sourcesHTML}</div>
-                ` : `
-                    <h4>No confirmed public-source matches</h4>
-                    <p class="source-note">This does not prove that the email is unused or invalid.</p>
-                `}
-
-                ${checksHTML ? `
-                    <h4>Technical checks</h4>
-                    <div class="technical-checks">${checksHTML}</div>
-                ` : ''}
-
-                ${manualHTML ? `
-                    <h4>Additional public-web searches</h4>
-                    <div class="manual-searches">${manualHTML}</div>
-                ` : ''}
-            </div>
-        `;
+    if (kind === 'username') {
+        const profiles = Array.isArray(data.profiles) ? data.profiles : [];
+        const checked = Array.isArray(data.sources) ? data.sources : [];
+        const found = profiles.map(p => '<div class="profile-item">' +
+            '<span class="platform-badge">' + escapeHtml(p.platform) + '</span> ' +
+            externalLink(p.profile_url, 'Verified public profile', 'profile-link') + '</div>').join('');
+        const checkedHtml = checked.map(p => '<div class="profile-item">' +
+            '<span class="platform-badge">' + escapeHtml(p.platform) + '</span> ' +
+            '<span class="status-badge">' + escapeHtml(p.status) + '</span>' +
+            (p.error ? ' <span class="source-note">' + escapeHtml(p.error) + '</span>' : '') +
+            '</div>').join('');
+        resultContent.innerHTML = '<div class="result-card"><h3>Username: ' +
+            escapeHtml(data.username) + '</h3>' +
+            field('Verified profiles', profiles.length) +
+            field('Summary', data.message) +
+            section('Verified public profiles', found) +
+            section('Candidate links — not confirmed (Instagram, TikTok, X, Telegram and others)',
+                manualLinks(data.manual_sources, 'profile_url')) +
+            (checkedHtml ? '<details><summary>API check status (' + checked.length +
+                ')</summary>' + checkedHtml + '</details>' : '') +
+            '</div>';
         return;
     }
 
-    // Default fallback
-    resultContent.innerHTML = `
-        <div class="result-card">
-            <h3>${data.query}</h3>
-            <p><strong>Status:</strong> ${data.status}</p>
-            <p>${data.message}</p>
-        </div>
-    `;
+    if (kind === 'phone') {
+        const confirmed = (Array.isArray(data.found_in_sources) ? data.found_in_sources : []).map(sourceCard).join('');
+        const info = (Array.isArray(data.info_sources) ? data.info_sources : []).map(sourceCard).join('');
+        resultContent.innerHTML = '<div class="result-card"><h3>Phone Search</h3>' +
+            field('Number', data.phone) + field('Summary', data.summary) +
+            section('Verified public matches', confirmed) +
+            section('Technical number information (not public matches)', info) +
+            section('Manual searches — unverified', manualLinks(data.manual_sources, 'source_url')) +
+            '</div>';
+        return;
+    }
+
+    if (kind === 'email') {
+        const confirmed = (Array.isArray(data.found_in_sources) ? data.found_in_sources : []).map(sourceCard).join('');
+        const checks = (Array.isArray(data.technical_checks) ? data.technical_checks : []).map(sourceCard).join('');
+        resultContent.innerHTML = '<div class="result-card"><h3>Email Search</h3>' +
+            field('Email', data.email) + field('Domain', data.domain) +
+            field('Summary', data.summary) +
+            (confirmed ? section('Verified public sources', confirmed) :
+                '<p class="source-note">No confirmed matches; this does not establish absence.</p>') +
+            section('Technical checks', checks) +
+            section('Manual searches — unverified', manualLinks(data.manual_sources, 'source_url')) +
+            '</div>';
+        return;
+    }
+
+    resultContent.innerHTML = '<div class="result-card"><h3>Analysis result</h3>' +
+        field('Query', data.query) + field('Status', data.status) +
+        field('Message', data.message) + '</div>';
 }
