@@ -1,268 +1,190 @@
-"""
-Username search service
-Find public profiles across multiple platforms
-"""
+"""Public username discovery with evidence-backed statuses.
 
+Only public, structured APIs can yield a verified match. A profile link or an
+HTTP 200 response from a social site is not enough to claim an account exists.
+No login, scraping around access controls, or private data collection.
+"""
 import asyncio
 import os
-from typing import Dict, Optional
+import re
+from typing import Any, Dict, List
+from urllib.parse import quote
 
 import aiohttp
 
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{2,39}$")
+REQUEST_TIMEOUT = 7
+MAX_CONCURRENCY = 5
+
+
+def _same(actual: Any, wanted: str) -> bool:
+    return isinstance(actual, str) and actual.casefold() == wanted.casefold()
+
+
+def _github(data: Any, name: str) -> bool:
+    return isinstance(data, dict) and isinstance(data.get("id"), int) and _same(data.get("login"), name)
+
+
+def _gitlab(data: Any, name: str) -> bool:
+    return isinstance(data, list) and any(
+        isinstance(user, dict) and _same(user.get("username"), name) for user in data
+    )
+
+
+def _reddit(data: Any, name: str) -> bool:
+    return (isinstance(data, dict) and isinstance(data.get("data"), dict)
+            and _same(data["data"].get("name"), name))
+
+
+def _keybase(data: Any, name: str) -> bool:
+    if not isinstance(data, dict) or (data.get("status") or {}).get("code") != 0:
+        return False
+    users = data.get("them")
+    if isinstance(users, dict):
+        users = [users]
+    if not isinstance(users, list):
+        return False
+    return any(isinstance(u, dict) and _same(
+        (u.get("basics") or {}).get("username"), name) for u in users)
+
+
+def _hackernews(data: Any, name: str) -> bool:
+    return isinstance(data, dict) and _same(data.get("id"), name)
+
+
+def _devto(data: Any, name: str) -> bool:
+    return isinstance(data, dict) and _same(data.get("username"), name)
+
+
+def _codeberg(data: Any, name: str) -> bool:
+    return isinstance(data, dict) and _same(data.get("login"), name)
+
+
+def _bluesky(data: Any, name: str) -> bool:
+    return isinstance(data, dict) and _same(data.get("handle"), name + ".bsky.social") and bool(data.get("did"))
+
 
 PLATFORMS = {
-    "github": {
-        "url": "https://api.github.com/users/{username}",
-        "profile_url": "https://github.com/{username}",
-    },
-    "twitter": {
-        "url": "https://twitter.com/{username}",
-        "profile_url": "https://twitter.com/{username}",
-        "method": "web",
-    },
-    "reddit": {
-        "url": "https://www.reddit.com/user/{username}/about.json",
-        "profile_url": "https://reddit.com/u/{username}",
-    },
-    "gitlab": {
-        "url": "https://gitlab.com/api/v4/users?username={username}",
-        "profile_url": "https://gitlab.com/{username}",
-    },
-    "stackoverflow": {
-        "url": "https://stackoverflow.com/users/{username}",
-        "profile_url": "https://stackoverflow.com/users/{username}",
-        "method": "web",
-    },
-    "keybase": {
-        "url": "https://keybase.io/api/1.0/user/lookup?username={username}",
-        "profile_url": "https://keybase.io/{username}",
-    },
-    "pastebin": {
-        "url": "https://pastebin.com/u/{username}",
-        "profile_url": "https://pastebin.com/u/{username}",
-        "method": "web",
-    },
-    "instagram": {
-        "url": "https://www.instagram.com/{username}/?__a=1",
-        "profile_url": "https://www.instagram.com/{username}",
-        "method": "web",
-    },
-    "tiktok": {
-        "url": "https://www.tiktok.com/@{username}",
-        "profile_url": "https://www.tiktok.com/@{username}",
-        "method": "web",
-    },
-    "telegram": {
-        "url": "https://t.me/{username}",
-        "profile_url": "https://t.me/{username}",
-        "method": "web",
-    },
+    "github": {"url": "https://api.github.com/users/{name}", "profile": "https://github.com/{name}", "valid": _github},
+    "gitlab": {"url": "https://gitlab.com/api/v4/users?username={name}", "profile": "https://gitlab.com/{name}", "valid": _gitlab},
+    "reddit": {"url": "https://www.reddit.com/user/{name}/about.json", "profile": "https://www.reddit.com/user/{name}", "valid": _reddit},
+    "keybase": {"url": "https://keybase.io/_/api/1.0/user/lookup.json?username={name}", "profile": "https://keybase.io/{name}", "valid": _keybase},
+    "hackernews": {"url": "https://hacker-news.firebaseio.com/v0/user/{name}.json", "profile": "https://news.ycombinator.com/user?id={name}", "valid": _hackernews},
+    "devto": {"url": "https://dev.to/api/users/by_username?url={name}", "profile": "https://dev.to/{name}", "valid": _devto},
+    "codeberg": {"url": "https://codeberg.org/api/v1/users/{name}", "profile": "https://codeberg.org/{name}", "valid": _codeberg},
+    # Public Bluesky AppView: confirms only the default username.bsky.social handle.
+    "bluesky": {"url": "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor={name}.bsky.social",
+                "profile": "https://bsky.app/profile/{name}.bsky.social", "valid": _bluesky},
 }
 
+# No dependable anonymous API for arbitrary profile existence on these services.
+# A candidate URL is offered for the user to inspect; it is NEVER a confirmed hit.
 MANUAL_PLATFORMS = {
-    "instagram",
-    "tiktok",
-    "telegram",
-    "twitter",
-    "stackoverflow",
-    "pastebin",
+    "instagram": "https://www.instagram.com/{name}/",
+    "tiktok": "https://www.tiktok.com/@{name}",
+    "x": "https://x.com/{name}",
+    "telegram": "https://t.me/{name}",
+    "snapchat": "https://www.snapchat.com/add/{name}",
+    "youtube": "https://www.youtube.com/@{name}",
+    "pinterest": "https://www.pinterest.com/{name}/",
+    "tumblr": "https://{name}.tumblr.com/",
+    "stackoverflow": "https://stackoverflow.com/users/?tab=users&search={name}",
+    "pastebin": "https://pastebin.com/u/{name}",
 }
+
+
+async def _check_platform(session: aiohttp.ClientSession, sem: asyncio.Semaphore,
+                          platform: str, config: Dict, name: str) -> Dict:
+    encoded = quote(name, safe="")
+    base = {"platform": platform, "username": name,
+            "profile_url": config["profile"].format(name=encoded), "found": False}
+    headers = {"User-Agent": "TraceNova/1.0 (public profile lookup)", "Accept": "application/json"}
+    if platform == "github" and os.getenv("GITHUB_TOKEN"):
+        headers["Authorization"] = "Bearer " + os.environ["GITHUB_TOKEN"]
+    try:
+        async with sem:
+            async with session.get(config["url"].format(name=encoded), headers=headers,
+                                   allow_redirects=False) as response:
+                if response.status == 404:
+                    return {**base, "status": "not_found"}
+                if response.status in (401, 403, 429):
+                    return {**base, "status": "unavailable", "error": "Blocked or rate limited (HTTP %s)" % response.status}
+                if response.status != 200:
+                    return {**base, "status": "error", "error": "HTTP %s" % response.status}
+                try:
+                    payload = await response.json(content_type=None)
+                except (ValueError, aiohttp.ClientError):
+                    return {**base, "status": "error", "error": "Invalid API response"}
+        if config["valid"](payload, name):
+            return {**base, "status": "found", "found": True}
+        # Some APIs return a JSON object for nonexistent users. Only a clearly
+        # documented 'not found' payload can establish absence; otherwise unknown.
+        if platform == "hackernews" and payload is None:
+            return {**base, "status": "not_found"}
+        if platform == "gitlab" and isinstance(payload, list) and not payload:
+            return {**base, "status": "not_found"}
+        return {**base, "status": "unavailable", "error": "API did not confirm an exact handle"}
+    except asyncio.TimeoutError:
+        return {**base, "status": "timeout", "error": "Request timed out"}
+    except aiohttp.ClientError as exc:
+        return {**base, "status": "error", "error": type(exc).__name__}
+    except Exception as exc:
+        return {**base, "status": "error", "error": type(exc).__name__}
 
 
 async def search_username(username: str) -> Dict:
-    """Search for a username across supported platforms."""
-
-    username = username.strip() if username else ""
-
-    if len(username) < 2:
-        return {
-            "status": "error",
-            "message": "Username too short (minimum 2 characters)",
-            "username": username,
-        }
-
-    found_profiles = []
-    manual_sources = []
-
-    async with aiohttp.ClientSession() as session:
-        tasks = []
-
-        for platform, config in PLATFORMS.items():
-            if platform in MANUAL_PLATFORMS:
-                manual_sources.append(
-                    {
-                        "platform": platform,
-                        "username": username,
-                        "profile_url": config["profile_url"].format(
-                            username=username
-                        ),
-                        "status": "manual",
-                        "message": (
-                            "Manual verification required; "
-                            "HTTP status alone is not treated as proof."
-                        ),
-                    }
-                )
-                continue
-
-            tasks.append(
-                _search_platform(session, platform, username, config)
-            )
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for result in results:
-            if isinstance(result, dict) and result.get("found") is True:
-                found_profiles.append(result)
-
-    total_verified = len(found_profiles)
-
+    username = (username or "").strip()
+    if not USERNAME_RE.fullmatch(username):
+        return {"query_type": "username", "status": "error", "username": username,
+                "message": "Username must contain 2–39 letters, digits, underscores, dots or hyphens."}
+    encoded = quote(username, safe="")
+    manual = [
+        {"platform": platform, "username": username, "status": "manual",
+         "profile_url": template.format(name=encoded),
+         "message": "Candidate link only — account existence not verified."}
+        for platform, template in MANUAL_PLATFORMS.items()
+    ]
+    sem = asyncio.Semaphore(MAX_CONCURRENCY)
+    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        results: List[Dict] = await asyncio.gather(*(
+            _check_platform(session, sem, platform, cfg, username)
+            for platform, cfg in PLATFORMS.items()
+        ))
+    found = [item for item in results if item["status"] == "found"]
+    failed = [item for item in results if item["status"] in ("error", "timeout", "unavailable")]
+    message = ("Verified %d public profile(s) on %d API-backed platforms. "
+               "%d platform(s) could not be confirmed; %d additional candidate links "
+               "require manual verification." % (len(found), len(results), len(failed), len(manual)))
     return {
-        "status": "success" if total_verified else "no_profiles_found",
+        "query_type": "username",
+        "status": "success" if found else ("partial_failure" if failed else "no_profiles_found"),
         "username": username,
-        "profiles_found": total_verified,
-        "profiles": found_profiles,
-        "manual_sources": manual_sources,
-        "message": (
-            f"Found {total_verified} verified profile(s) "
-            f"with username '{username}'"
-        ),
+        "profiles_found": len(found),
+        "profiles": found,
+        "sources": results,
+        "manual_sources": manual,
+        "message": message,
     }
 
 
-async def _search_platform(
-    session: aiohttp.ClientSession,
-    platform: str,
-    username: str,
-    config: Dict,
-) -> Optional[Dict]:
-    """Search for a username on an API-backed platform."""
-
-    try:
-        url = config["url"].format(username=username)
-        profile_url = config["profile_url"].format(username=username)
-
-        headers = {"User-Agent": "TraceNova/1.0"}
-
-        if platform == "github":
-            headers["Accept"] = "application/vnd.github+json"
-            github_token = os.getenv("GITHUB_TOKEN")
-            if github_token:
-                headers["Authorization"] = f"Bearer {github_token}"
-
-        timeout = aiohttp.ClientTimeout(total=5)
-
-        async with session.get(
-            url,
-            headers=headers,
-            timeout=timeout,
-        ) as response:
-            if response.status == 404:
-                return None
-
-            if response.status != 200:
-                return None
-
-            try:
-                data = await response.json()
-            except (aiohttp.ContentTypeError, ValueError):
-                return None
-
-            if _is_valid_profile(platform, data):
-                return {
-                    "platform": platform,
-                    "username": username,
-                    "profile_url": profile_url,
-                    "found": True,
-                    "status": "verified",
-                }
-
-            return None
-
-    except (asyncio.TimeoutError, aiohttp.ClientError):
-        return None
-    except Exception:
-        return None
-
-
-def _is_valid_profile(platform: str, data: Dict) -> bool:
-    """Check whether an API response indicates a valid profile."""
-
-    if not data:
-        return False
-
-    if platform == "github":
-        return (
-            isinstance(data, dict)
-            and "login" in data
-            and "id" in data
-        )
-
-    if platform == "reddit":
-        return (
-            isinstance(data, dict)
-            and isinstance(data.get("data"), dict)
-            and "name" in data["data"]
-        )
-
-    if platform == "gitlab":
-        return isinstance(data, list) and len(data) > 0
-
-    if platform == "keybase":
-        return (
-            isinstance(data, dict)
-            and data.get("them") is not None
-        )
-
-    return False
-
-
 async def get_username_info(username: str, platform: str) -> Dict:
-    """Get detailed information about a username on a supported platform."""
-
-    if platform not in PLATFORMS:
-        return {"error": "Platform not supported"}
-
-    config = PLATFORMS[platform]
-
-    if platform in MANUAL_PLATFORMS:
-        return {
-            "error": "Manual verification required",
-            "profile_url": config["profile_url"].format(username=username),
-        }
-
-    url = config["url"].format(username=username)
+    """Fetch public structured API data for a supported platform."""
+    if not USERNAME_RE.fullmatch(username or ""):
+        return {"error": "Invalid username"}
+    cfg = PLATFORMS.get(platform)
+    if not cfg:
+        return {"error": "Unsupported platform"}
+    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
     headers = {"User-Agent": "TraceNova/1.0"}
-
-    if platform == "github":
-        headers["Accept"] = "application/vnd.github+json"
-        github_token = os.getenv("GITHUB_TOKEN")
-        if github_token:
-            headers["Authorization"] = f"Bearer {github_token}"
-
     try:
-        timeout = aiohttp.ClientTimeout(total=5)
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url,
-                headers=headers,
-                timeout=timeout,
-            ) as response:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(cfg["url"].format(name=quote(username, safe="")),
+                                   headers=headers, allow_redirects=False) as response:
+                if response.status == 404:
+                    return {"status": "not_found"}
                 if response.status != 200:
-                    return {
-                        "error": "Profile not found",
-                        "status_code": response.status,
-                    }
-
-                try:
-                    return await response.json()
-                except (aiohttp.ContentTypeError, ValueError):
-                    return {"error": "Invalid response from platform"}
-
-    except asyncio.TimeoutError:
-        return {"error": "request_timeout"}
-    except aiohttp.ClientError:
-        return {"error": "request_failed"}
-    except Exception:
-        return {"error": "request_failed"}
+                    return {"status": "unavailable", "http_status": response.status}
+                return await response.json(content_type=None)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return {"status": "error", "error": "Lookup failed"}
