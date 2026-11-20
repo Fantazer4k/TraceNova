@@ -22,3 +22,5 @@ jobs:
         run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Check frontend JavaScript syntax
         run: node --check tracenova/frontend/static/script.js
+      - name: Test frontend XSS protection
+        run: node tracenova/tests/test_frontend_safety.js
