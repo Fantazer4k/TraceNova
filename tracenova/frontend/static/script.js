@@ -224,7 +224,9 @@ function displayResults(data) {
             field('Path', data.path) + field('Resolved IPs', data.resolved_ips) +
             field('TLS status', data.scheme === 'https' ? (tls.status || 'unknown') : 'Not applicable (HTTP)') +
             field('TLS version', tls.version) + field('Certificate expiry', tls.expires) +
-            field('TLS note', tls.message) + field('Summary', data.message) + '</div>';
+            field('TLS note', tls.message) + field('TLS endpoint', tls.connected_ip) +
+            field('TLS endpoints checked', tls.checked_endpoints) +
+            field('Summary', data.message) + '</div>';
         return;
     }
 
@@ -253,7 +255,9 @@ function displayResults(data) {
     if (kind === 'domain') {
         const ip = data.ip_info || {};
         resultContent.innerHTML = '<div class="result-card"><h3>Domain DNS Analysis</h3>' +
-            field('Domain', data.domain) + field('IPv4 address', data.ip_address) +
+            field('Domain', data.domain) + field('Primary address', data.ip_address) +
+            field('IPv4 addresses', data.ip_addresses) +
+            field('IPv6 addresses', data.ipv6_addresses) +
             field('Reverse DNS', ip.reverse_dns) +
             field('Summary', data.message) + '</div>';
         return;
