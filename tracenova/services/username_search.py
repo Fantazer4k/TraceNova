@@ -109,6 +109,9 @@ async def _check_platform(session: aiohttp.ClientSession, sem: asyncio.Semaphore
                     return {**base, "status": "not_found"}
                 if response.status in (401, 403, 429):
                     return {**base, "status": "unavailable", "error": "Blocked or rate limited (HTTP %s)" % response.status}
+                if response.status == 400 and platform == "bluesky":
+                    return {**base, "status": "unavailable",
+                            "error": "Bluesky did not resolve this default .bsky.social handle (HTTP 400). Not a confirmed match."}
                 if response.status != 200:
                     return {**base, "status": "error", "error": "HTTP %s" % response.status}
                 try:

@@ -11,45 +11,52 @@ import asyncio
 from typing import Dict, Optional
 
 async def resolve_domain_to_ip(domain: str) -> Dict:
-    """
-    Resolve domain name to IP address
+    """Resolve public A/AAAA records using the same protected DNS path as URL Search.
 
-    Args:
-        domain: Domain name (e.g., example.com)
-
-    Returns:
-        Dict with IP address and metadata
+    If the local resolver fails (as seen with example.com on some routers),
+    the shared resolver uses its DNS-over-HTTPS fallback.
     """
+    from urllib.parse import urlsplit
+    from services.url_analyzer import _resolve_public_addresses
+
+    original = (domain or "").strip()
+    if not original:
+        return {"status": "error", "domain": original, "message": "Enter a domain name."}
     try:
-        # Remove protocol if present
-        domain = domain.replace("http://", "").replace("https://", "").split("/")[0]
-
-        # Resolve using socket in async context
-        loop = asyncio.get_event_loop()
-        ip_address = await loop.run_in_executor(None, socket.gethostbyname, domain)
-
+        candidate = original if "://" in original else "https://" + original
+        parts = urlsplit(candidate)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise ValueError("Enter a domain hostname, not a URL with another protocol.")
+        if parts.username is not None or parts.password is not None:
+            raise ValueError("Embedded credentials are not supported.")
+        if parts.path not in ("", "/") or parts.query or parts.fragment:
+            raise ValueError("Domain Search expects only a hostname, without path or query.")
+        hostname = parts.hostname.encode("idna").decode("ascii").lower()
+        if len(hostname) > 253 or not all(
+            0 < len(label) <= 63 and label[0] != "-" and label[-1] != "-"
+            for label in hostname.split(".")
+        ):
+            raise ValueError("Invalid domain hostname.")
+        # Shared protection blocks private destinations and unsafe DNS answers.
+        addresses = await asyncio.to_thread(_resolve_public_addresses, hostname, 443)
+        v4 = [ip for ip in addresses if ipaddress.ip_address(ip).version == 4]
+        v6 = [ip for ip in addresses if ipaddress.ip_address(ip).version == 6]
         return {
-            "status": "success",
-            "domain": domain,
-            "ip_address": ip_address,
-            "message": f"Successfully resolved {domain} to {ip_address}"
+            "status": "success", "query_type": "domain", "domain": hostname,
+            "ip_address": v4[0] if v4 else (v6[0] if v6 else None),
+            "ip_addresses": v4, "ipv6_addresses": v6,
+            "message": "Public DNS resolution completed. These addresses may change over time.",
         }
-
-    except socket.gaierror as e:
-        return {
-            "status": "error",
-            "domain": domain,
-            "message": f"Domain not found or invalid: {str(e)}",
-            "error_type": "resolution_failed"
-        }
-
-    except Exception as e:
-        return {
-            "status": "error",
-            "domain": domain,
-            "message": f"Error resolving domain: {str(e)}",
-            "error_type": "unknown_error"
-        }
+    except (ValueError, UnicodeError) as exc:
+        return {"status": "error", "query_type": "domain", "domain": original,
+                "message": str(exc), "error_type": "invalid_domain_or_target"}
+    except socket.gaierror:
+        return {"status": "error", "query_type": "domain", "domain": original,
+                "message": "Domain could not be resolved with system DNS or configured DoH.",
+                "error_type": "resolution_failed"}
+    except OSError:
+        return {"status": "error", "query_type": "domain", "domain": original,
+                "message": "DNS lookup failed due to a network error.", "error_type": "network_error"}
 
 
 async def get_additional_ip_info(ip_address: str) -> Dict:

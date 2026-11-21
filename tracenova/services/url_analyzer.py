@@ -140,12 +140,32 @@ def _analyze_url(url: str) -> dict:
         }
 
         if scheme == "https":
-            try:
-                result["tls"] = _inspect_tls(hostname, addresses[0], port)
-            except (OSError, ssl.SSLError, TimeoutError) as exc:
+            # DNS fallback can return multiple public endpoints. A single edge IP
+            # may be unavailable or serve a different certificate. Never turn off
+            # certificate verification; instead try a few verified public IPs.
+            errors = []
+            for address in addresses[:4]:
+                try:
+                    result["tls"] = _inspect_tls(hostname, address, port)
+                    result["tls"]["connected_ip"] = address
+                    break
+                except ssl.SSLCertVerificationError:
+                    errors.append("certificate_verification_failed")
+                except (OSError, ssl.SSLError, TimeoutError) as exc:
+                    errors.append(type(exc).__name__)
+            else:
+                cert_error = "certificate_verification_failed" in errors
                 result["tls"] = {
-                    "status": "unavailable",
-                    "message": f"TLS handshake could not be completed: {type(exc).__name__}",
+                    "status": "verification_failed" if cert_error else "unavailable",
+                    "message": (
+                        "TLS certificate could not be verified from this machine. "
+                        "Possible causes include local trust settings, HTTPS inspection, "
+                        "or a mismatch between DNS and the selected server. "
+                        "This does not by itself prove that the website is unsafe."
+                        if cert_error else
+                        "TLS handshake was unsuccessful on the checked public endpoints."
+                    ),
+                    "checked_endpoints": min(4, len(addresses)),
                 }
 
         return result
