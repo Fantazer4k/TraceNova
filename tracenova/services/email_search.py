@@ -145,13 +145,14 @@ async def _search_github(session: aiohttp.ClientSession, email: str) -> Optional
                 return None
 
             return {
-                "found": True,
+                "category": "technical",
+                "status": "candidates_unverified",
                 "source": "GitHub",
                 "source_url": "https://github.com",
                 "icon": "🐙",
                 "description": (
-                    f"GitHub returned {total_count} public profile match(es) "
-                    "for this search query. A search match is not proof of identity."
+                    f"GitHub search returned {total_count} candidate result(s). "
+                    "The exact email was not verified in any profile; these are NOT confirmed email matches."
                 ),
                 "profiles": [
                     {
@@ -163,7 +164,7 @@ async def _search_github(session: aiohttp.ClientSession, email: str) -> Optional
                 ],
                 "type": "real_search",
                 "priority": 100,
-                "confidence": "medium",
+                "confidence": "unverified",
             }
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return None
@@ -192,16 +193,18 @@ async def _search_github_code(session: aiohttp.ClientSession, email: str) -> Opt
                 return None
 
             return {
-                "found": True,
+                "category": "technical",
+                "status": "candidates_unverified",
                 "source": "GitHub Code",
                 "source_url": f"https://github.com/search?q={quote(chr(34) + email + chr(34))}&type=code",
                 "icon": "📄",
                 "description": (
-                    f"Found {total_count} public code result(s) containing the exact email."
+                    f"GitHub code search returned {total_count} candidate(s), but exact occurrences "
+                    "were not verified in source content."
                 ),
                 "type": "code_search",
                 "priority": 85,
-                "confidence": "medium",
+                "confidence": "unverified",
             }
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return None
@@ -247,7 +250,7 @@ async def _check_hibp(session: aiohttp.ClientSession, email: str) -> Optional[Di
                     "breaches": [item.get("Name") for item in breaches],
                     "type": "security_alert",
                     "priority": 95,
-                    "confidence": "high",
+                    "confidence": "verification_only",
                 }
 
             return {
@@ -292,7 +295,8 @@ async def _verify_email_zerobounce(
             result_status = data.get("status", "unknown")
             if result_status in {"valid", "catch-all"}:
                 return {
-                    "found": True,
+                    "category": "technical",
+                    "status": result_status,
                     "source": "Email Verification",
                     "icon": "✅",
                     "description": f"ZeroBounce returned: {result_status}.",
