@@ -24,6 +24,36 @@ DNS_RESOLVERS = (
 )
 
 
+def _source_check(source: str, status: str, description: str) -> Dict:
+    return {"category": "technical", "source": source, "status": status, "description": description}
+
+
+def _http_failure(source: str, response) -> Dict:
+    limited = response.status == 429 or (
+        response.status == 403 and response.headers.get("X-RateLimit-Remaining") == "0"
+    )
+    return _source_check(
+        source, "rate_limited" if limited else "unavailable",
+        f"Provider returned HTTP {response.status}.",
+    )
+
+
+async def _check_source(source: str, operation) -> Dict:
+    try:
+        result = await operation
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError, AttributeError, KeyError) as exc:
+        return _provider_exception(source, exc)
+    return result or _source_check(source, "error", "The provider check returned no status.")
+
+
+def _provider_exception(source: str, exc: Exception) -> Dict:
+    if isinstance(exc, asyncio.TimeoutError):
+        return _source_check(source, "timeout", "The provider request timed out.")
+    if isinstance(exc, (aiohttp.ContentTypeError, ValueError, TypeError, AttributeError, KeyError)):
+        return _source_check(source, "error", "The provider returned an invalid response.")
+    return _source_check(source, "unavailable", "The provider could not be reached.")
+
+
 async def search_email(email: str) -> Dict:
     """Collect public-source and technical intelligence for an email."""
     if not email or "@" not in email:
@@ -42,17 +72,17 @@ async def search_email(email: str) -> Dict:
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         tasks = [
-            _search_github(session, email),
-            _search_github_code(session, email),
-            _check_hibp(session, email),
-            _check_domain_mx(session, domain),
-            _check_gravatar(session, email),
+            _check_source("GitHub", _search_github(session, email)),
+            _check_source("GitHub Code", _search_github_code(session, email)),
+            _check_source("Have I Been Pwned", _check_hibp(session, email)),
+            _check_source("DNS / MX", _check_domain_mx(session, domain)),
+            _check_source("Gravatar", _check_gravatar(session, email)),
         ]
 
         # These integrations are useful when configured, but never pretend
         # that a placeholder/free key is a real verification service.
         if os.getenv("ZEROBOUNCE_API_KEY"):
-            tasks.append(_verify_email_zerobounce(session, email))
+            tasks.append(_check_source("ZeroBounce", _verify_email_zerobounce(session, email)))
         else:
             technical_checks.append({
                 "source": "ZeroBounce",
@@ -60,7 +90,7 @@ async def search_email(email: str) -> Dict:
                 "description": "Optional email verification API key is not configured.",
             })
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks)
 
         for result in results:
             if not isinstance(result, dict):
@@ -75,13 +105,16 @@ async def search_email(email: str) -> Dict:
     # Use an API-backed search provider when configured. Otherwise keep manual links.
     if os.getenv("BRAVE_SEARCH_API_KEY"):
         async with aiohttp.ClientSession(timeout=timeout) as web_session:
-            web_result = await _search_public_web(web_session, email)
+            web_result = await _check_source("Brave Search", _search_public_web(web_session, email))
         if web_result:
             if web_result.get("found") is True:
                 found_sources.append(web_result)
             elif web_result.get("category") == "technical":
                 technical_checks.append(web_result)
     else:
+        technical_checks.append(_source_check(
+            "Brave Search", "not_configured", "Optional web search API key is not configured.",
+        ))
         manual_sources.extend([
             _manual_google_search(email),
             _manual_social_search(email),
@@ -104,8 +137,8 @@ async def search_email(email: str) -> Dict:
     else:
         status = "no_results"
         summary = (
-            "No confirmed public-source matches found. "
-            "This does not prove that the email is unused or invalid."
+            "No confirmed matches were returned by these checks. "
+            "See individual source statuses for gaps in coverage."
         )
 
     return {
@@ -135,14 +168,16 @@ async def _search_github(session: aiohttp.ClientSession, email: str) -> Optional
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, allow_redirects=False) as response:
             if response.status != 200:
-                return None
+                return _http_failure("GitHub", response)
 
             data = await response.json()
-            total_count = data.get("total_count", 0)
+            total_count = data["total_count"]
             if total_count <= 0:
-                return None
+                if data.get("incomplete_results"):
+                    return _source_check("GitHub", "incomplete", "GitHub reported incomplete search results.")
+                return _source_check("GitHub", "checked_no_match", "GitHub returned no profile candidates.")
 
             return {
                 "category": "technical",
@@ -153,6 +188,7 @@ async def _search_github(session: aiohttp.ClientSession, email: str) -> Optional
                 "description": (
                     f"GitHub search returned {total_count} candidate result(s). "
                     "The exact email was not verified in any profile; these are NOT confirmed email matches."
+                    + (" GitHub reported incomplete coverage." if data.get("incomplete_results") else "")
                 ),
                 "profiles": [
                     {
@@ -166,9 +202,8 @@ async def _search_github(session: aiohttp.ClientSession, email: str) -> Optional
                 "priority": 100,
                 "confidence": "unverified",
             }
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-        return None
-    return None
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError, AttributeError, KeyError) as exc:
+        return _provider_exception("GitHub", exc)
 
 
 async def _search_github_code(session: aiohttp.ClientSession, email: str) -> Optional[Dict]:
@@ -183,14 +218,16 @@ async def _search_github_code(session: aiohttp.ClientSession, email: str) -> Opt
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, allow_redirects=False) as response:
             if response.status != 200:
-                return None
+                return _http_failure("GitHub Code", response)
 
             data = await response.json()
-            total_count = data.get("total_count", 0)
+            total_count = data["total_count"]
             if total_count <= 0:
-                return None
+                if data.get("incomplete_results"):
+                    return _source_check("GitHub Code", "incomplete", "GitHub reported incomplete code search results.")
+                return _source_check("GitHub Code", "checked_no_match", "GitHub returned no code candidates.")
 
             return {
                 "category": "technical",
@@ -201,14 +238,14 @@ async def _search_github_code(session: aiohttp.ClientSession, email: str) -> Opt
                 "description": (
                     f"GitHub code search returned {total_count} candidate(s), but exact occurrences "
                     "were not verified in source content."
+                    + (" GitHub reported incomplete coverage." if data.get("incomplete_results") else "")
                 ),
                 "type": "code_search",
                 "priority": 85,
                 "confidence": "unverified",
             }
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-        return None
-    return None
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError, AttributeError, KeyError) as exc:
+        return _provider_exception("GitHub Code", exc)
 
 
 async def _check_hibp(session: aiohttp.ClientSession, email: str) -> Optional[Dict]:
@@ -229,7 +266,7 @@ async def _check_hibp(session: aiohttp.ClientSession, email: str) -> Optional[Di
             "hibp-api-key": api_key,
         }
 
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, allow_redirects=False) as response:
             if response.status == 404:
                 return {
                     "category": "technical",
@@ -240,6 +277,13 @@ async def _check_hibp(session: aiohttp.ClientSession, email: str) -> Optional[Di
 
             if response.status == 200:
                 breaches = await response.json()
+                if not isinstance(breaches, list) or any(
+                    not isinstance(item, dict) or not isinstance(item.get("Name"), str)
+                    for item in breaches
+                ):
+                    return _source_check("Have I Been Pwned", "error", "Invalid breach response.")
+                if not breaches:
+                    return _source_check("Have I Been Pwned", "checked_no_match", "No breach was returned.")
                 return {
                     "found": True,
                     "source": "Data Breaches (HIBP)",
@@ -253,19 +297,9 @@ async def _check_hibp(session: aiohttp.ClientSession, email: str) -> Optional[Di
                     "confidence": "verification_only",
                 }
 
-            return {
-                "category": "technical",
-                "source": "Have I Been Pwned",
-                "status": "unavailable",
-                "description": f"HIBP returned HTTP {response.status}.",
-            }
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-        return {
-            "category": "technical",
-            "source": "Have I Been Pwned",
-            "status": "unavailable",
-            "description": "HIBP could not be reached.",
-        }
+            return _http_failure("Have I Been Pwned", response)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        return _provider_exception("Have I Been Pwned", exc)
 
 
 async def _verify_email_zerobounce(
@@ -282,14 +316,9 @@ async def _verify_email_zerobounce(
             "https://api.zerobounce.net/v2/validate"
             f"?email={quote(email)}&api_key={quote(api_key)}"
         )
-        async with session.get(url) as response:
+        async with session.get(url, allow_redirects=False) as response:
             if response.status != 200:
-                return {
-                    "category": "technical",
-                    "source": "ZeroBounce",
-                    "status": "unavailable",
-                    "description": f"ZeroBounce returned HTTP {response.status}.",
-                }
+                return _http_failure("ZeroBounce", response)
 
             data = await response.json()
             result_status = data.get("status", "unknown")
@@ -311,13 +340,8 @@ async def _verify_email_zerobounce(
                 "status": result_status,
                 "description": f"ZeroBounce returned: {result_status}.",
             }
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-        return {
-            "category": "technical",
-            "source": "ZeroBounce",
-            "status": "unavailable",
-            "description": "ZeroBounce could not be reached.",
-        }
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        return _provider_exception("ZeroBounce", exc)
 
 
 async def _check_domain_mx(
@@ -411,9 +435,11 @@ async def _check_gravatar(session: aiohttp.ClientSession, email: str) -> Optiona
                     "confidence": "medium",
                     "note": "This is evidence of a public avatar association, not proof of identity.",
                 }
-    except (aiohttp.ClientError, asyncio.TimeoutError):
-        return None
-    return None
+            if response.status == 404:
+                return _source_check("Gravatar", "checked_no_match", "No public avatar was returned.")
+            return _http_failure("Gravatar", response)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        return _provider_exception("Gravatar", exc)
 
 
 async def _search_public_web(
@@ -438,14 +464,9 @@ async def _search_public_web(
     }
 
     try:
-        async with session.get(url, headers=headers, params=params) as response:
+        async with session.get(url, headers=headers, params=params, allow_redirects=False) as response:
             if response.status != 200:
-                return {
-                    "category": "technical",
-                    "source": "Brave Search",
-                    "status": "unavailable",
-                    "description": f"Public web search returned HTTP {response.status}.",
-                }
+                return _http_failure("Brave Search", response)
 
             data = await response.json()
             results = data.get("web", {}).get("results", [])
@@ -494,13 +515,8 @@ async def _search_public_web(
                 "priority": 55,
                 "confidence": "low",
             }
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-        return {
-            "category": "technical",
-            "source": "Brave Search",
-            "status": "unavailable",
-            "description": "Public web search could not be completed.",
-        }
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        return _provider_exception("Brave Search", exc)
 
 
 def _extract_domain(url: str) -> str:

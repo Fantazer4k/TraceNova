@@ -30,6 +30,8 @@ vm.runInContext(script, context);
 const injection = '<svg onload=alert(1)>';
 const tests = [
   ['email', { email: injection, domain: injection, summary: injection,
+      technical_checks: [{source: 'GitHub', status: 'rate_limited'},
+        {source: 'Another provider', status: injection}],
       found_in_sources: [{source: injection, description: injection,
         source_url: 'javascript:alert(1)', profiles: [{username: injection,
         profile_url: 'javascript:alert(1)', avatar: 'javascript:alert(1)'}]}] }],
@@ -53,5 +55,6 @@ for (const [kind, data] of tests) {
   assert(!html.includes(injection), kind + ': raw input leaked into HTML');
   assert(!html.includes('href="javascript:'), kind + ': unsafe link in HTML');
   assert(!html.includes('src="javascript:'), kind + ': unsafe image URL');
+  if (kind === 'email') assert(html.includes('rate limited'), 'Email source status must be visible');
 }
 console.log('Frontend safe-rendering tests passed (' + tests.length + ' modes).');

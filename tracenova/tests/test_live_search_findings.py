@@ -31,6 +31,24 @@ class _FakeSession:
 
 
 class EmailConfidenceTests(unittest.TestCase):
+    def test_empty_rate_limited_and_invalid_responses_are_distinct(self):
+        for status, body, expected in (
+            (200, {"total_count": 0}, "checked_no_match"),
+            (429, {}, "rate_limited"),
+            (503, {}, "unavailable"),
+            (200, [], "error"),
+        ):
+            with self.subTest(status=status, expected=expected):
+                session = _FakeSession(status, body)
+                result = asyncio.run(email_search._search_github(session, "example@example.com"))
+                self.assertEqual(result["status"], expected)
+
+    def test_timeout_is_not_reported_as_absence(self):
+        session = _FakeSession(200, {})
+        with patch.object(session, "get", side_effect=asyncio.TimeoutError):
+            result = asyncio.run(email_search._check_gravatar(session, "example@example.com"))
+        self.assertEqual(result["status"], "timeout")
+
     def test_github_profile_search_is_unverified(self):
         session = _FakeSession(200, {
             "total_count": 8,

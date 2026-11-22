@@ -107,8 +107,12 @@ async def _check_platform(session: aiohttp.ClientSession, sem: asyncio.Semaphore
                                    allow_redirects=False) as response:
                 if response.status == 404:
                     return {**base, "status": "not_found"}
-                if response.status in (401, 403, 429):
-                    return {**base, "status": "unavailable", "error": "Blocked or rate limited (HTTP %s)" % response.status}
+                if response.status == 429 or (
+                    response.status == 403 and response.headers.get("X-RateLimit-Remaining") == "0"
+                ):
+                    return {**base, "status": "rate_limited", "error": "Provider rate limit reached"}
+                if response.status in (401, 403):
+                    return {**base, "status": "unavailable", "error": "Access denied (HTTP %s)" % response.status}
                 if response.status == 400 and platform == "bluesky":
                     return {**base, "status": "unavailable",
                             "error": "Bluesky did not resolve this default .bsky.social handle (HTTP 400). Not a confirmed match."}
@@ -155,7 +159,7 @@ async def search_username(username: str) -> Dict:
             for platform, cfg in PLATFORMS.items()
         ))
     found = [item for item in results if item["status"] == "found"]
-    failed = [item for item in results if item["status"] in ("error", "timeout", "unavailable")]
+    failed = [item for item in results if item["status"] in ("error", "timeout", "unavailable", "rate_limited")]
     message = ("Verified %d public profile(s) on %d API-backed platforms. "
                "%d platform(s) could not be confirmed; %d additional candidate links "
                "require manual verification." % (len(found), len(results), len(failed), len(manual)))

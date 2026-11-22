@@ -167,6 +167,7 @@ function detailsMarkup(details) {
 
 function sourceCard(source) {
     if (!source || typeof source !== 'object') return '';
+    const status = source.status ? String(source.status).replaceAll('_', ' ') : '';
     const profiles = Array.isArray(source.profiles) ? source.profiles : [];
     const breaches = Array.isArray(source.breaches) ? source.breaches : [];
     const webResults = Array.isArray(source.results) ? source.results : [];
@@ -178,7 +179,8 @@ function sourceCard(source) {
     }).join('');
     return '<div class="email-source-item"><div class="source-header"><span class="source-badge">' +
         escapeHtml(source.icon || '•') + ' ' + escapeHtml(source.source || source.platform || 'Source') +
-        '</span></div><div class="source-content">' +
+        '</span>' + (status ? '<span class="status-badge">' + escapeHtml(status) + '</span>' : '') +
+        '</div><div class="source-content">' +
         (source.description ? '<p class="source-description">' + escapeHtml(source.description) + '</p>' : '') +
         (source.note ? '<p class="source-note">' + escapeHtml(source.note) + '</p>' : '') +
         detailsMarkup(source.details) + profileHtml +

@@ -79,6 +79,10 @@ python main.py
 ```
 
 The development server runs on `http://127.0.0.1:8000` by default.
+Use `HOST` and `PORT` to override the bind address and port. Each worker accepts
+up to `MAX_CONCURRENT_ANALYSES` simultaneous analyses (default: 8) and returns
+HTTP 503 when busy. Configure client access and rate limits at the gateway for
+network deployments.
 
 ## Responsible use
 

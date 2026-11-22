@@ -2,8 +2,11 @@ name: TraceNova checks
 
 on:
   push:
-    branches: [main, fix/search-reliability-nov2026]
+    branches: [main, 'repair/**']
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   tests:

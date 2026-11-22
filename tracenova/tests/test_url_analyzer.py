@@ -1,12 +1,28 @@
 """Unit tests for safe URL analysis."""
 
 import unittest
+from io import BytesIO
 from unittest.mock import patch
 
-from services.url_analyzer import _analyze_url, _resolve_public_addresses
+from services.url_analyzer import _analyze_url, _resolve_public_addresses, _resolve_with_doh
 
 
 class URLAnalyzerTests(unittest.TestCase):
+    @patch("services.url_analyzer._resolve_public_addresses")
+    def test_zero_port_rejected_before_dns(self, resolve):
+        self.assertEqual(_analyze_url("https://example.com:0")["status"], "error")
+        resolve.assert_not_called()
+
+    @patch("services.url_analyzer.urlopen")
+    def test_doh_recovers_from_oversized_and_malformed_responses(self, open_url):
+        open_url.side_effect = [
+            BytesIO(b" " * (64 * 1024 + 1)),
+            BytesIO(b'{"Status":0,"Answer":[null,{"type":1,"data":"8.8.8.8"}]}'),
+            BytesIO(b'{"Status":0,"Answer":null}'),
+            BytesIO(b'{"Status":0,"Answer":[{"type":28,"data":"2606:4700:4700::1111"}]}'),
+        ]
+        self.assertEqual(_resolve_with_doh("example.com"), ["8.8.8.8", "2606:4700:4700::1111"])
+
     @patch("services.url_analyzer._resolve_public_addresses", return_value=["93.184.216.34"])
     def test_http_url_returns_parsed_metadata(self, _resolve):
         result = _analyze_url("http://example.com/docs?q=1")
