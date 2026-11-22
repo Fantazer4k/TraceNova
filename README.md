@@ -29,7 +29,7 @@ TraceNova/
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10 or later. CI checks Python 3.10 and 3.13 on Ubuntu and Windows.
 - pip
 
 ## Installation
@@ -83,6 +83,14 @@ Use `HOST` and `PORT` to override the bind address and port. Each worker accepts
 up to `MAX_CONCURRENT_ANALYSES` simultaneous analyses (default: 8) and returns
 HTTP 503 when busy. Configure client access and rate limits at the gateway for
 network deployments.
+
+## Checks
+
+After installing the application dependencies, run `python -m pip check` and
+`python -m unittest discover -s tests -v` from `tracenova/`. With Node.js 24,
+run `node tests/test_frontend_safety.js` from the same directory.
+GitHub Actions records a resolved dependency list for each Python and OS
+combination and audits those versions with pip-audit.
 
 ## Responsible use
 

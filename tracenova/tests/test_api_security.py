@@ -61,6 +61,17 @@ class AnalysisSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b"frame-ancestors 'none'", headers[b"content-security-policy"])
         self.assertEqual(headers[b"x-content-type-options"], b"nosniff")
 
+    async def test_health_and_static_assets_are_served(self):
+        app = create_app()
+        status, _, body = await request(app, "/health")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["status"], "ok")
+
+        status, headers, body = await request(app, "/static/script.js")
+        self.assertEqual(status, 200)
+        self.assertIn(b"javascript", headers[b"content-type"])
+        self.assertIn(b"function displayResults", body)
+
     async def test_capacity_is_recovered_after_analysis(self):
         started = asyncio.Event()
         finish = asyncio.Event()
