@@ -46,7 +46,7 @@ const helpContent = {
     },
     username: {
         title: "Username Search",
-        text: "Check matching usernames using public structured APIs (GitHub, GitLab, Reddit, Bluesky and others). Instagram, TikTok, X and Telegram are candidate links for manual checking, not verified accounts."
+        text: "Enter an exact username. TraceNova shows links for confirmed public matches and a short result for each platform."
     },
     email: {
         title: "Email Search",
@@ -355,24 +355,30 @@ function displayResults(data) {
     if (kind === 'username') {
         const profiles = Array.isArray(data.profiles) ? data.profiles : [];
         const checked = Array.isArray(data.sources) ? data.sources : [];
-        const found = profiles.map(p => '<div class="profile-item">' +
-            '<span class="platform-badge">' + escapeHtml(p.platform) + '</span> ' +
-            externalLink(p.profile_url, 'Verified public profile', 'profile-link') + '</div>').join('');
-        const checkedHtml = checked.map(p => '<div class="profile-item">' +
-            '<span class="platform-badge">' + escapeHtml(p.platform) + '</span> ' +
-            statusBadge(p.status) +
-            (p.error ? ' <span class="source-note">' + escapeHtml(p.error) + '</span>' : '') +
-            '</div>').join('');
+        const names = new Map(Object.entries({
+            github: 'GitHub', gitlab: 'GitLab', reddit: 'Reddit', keybase: 'Keybase',
+            hackernews: 'Hacker News', devto: 'DEV Community', codeberg: 'Codeberg',
+            bluesky: 'Bluesky', x: 'X', youtube: 'YouTube', instagram: 'Instagram',
+            tiktok: 'TikTok', facebook: 'Facebook', telegram: 'Telegram', vk: 'VK',
+            snapchat: 'Snapchat', pinterest: 'Pinterest', tumblr: 'Tumblr',
+            stackoverflow: 'Stack Overflow', pastebin: 'Pastebin'
+        }));
+        const matches = new Map(profiles.map(profile => [profile.platform, profile]));
+        const platforms = new Map([...checked, ...profiles].map(source => [source.platform, source]));
+        const rows = Array.from(platforms, ([platform, source]) => {
+            const name = names.get(platform) || platform;
+            const url = matches.get(platform)?.profile_url;
+            const link = externalLink(url, url, 'profile-link');
+            const message = source.status === 'not_found'
+                ? 'No user with this username was found on ' + name + '.'
+                : 'No verified match found on ' + name + '.';
+            return '<li class="profile-item">' +
+                (link ? '<span class="platform-badge">' + escapeHtml(name) + '</span> ' + link
+                    : escapeHtml(message)) + '</li>';
+        }).join('');
         resultContent.innerHTML = '<div class="result-card"><h3>Username: ' +
             escapeHtml(data.username) + '</h3>' +
-            field('Verified profiles', profiles.length) +
-            field('Summary', data.message) +
-            coverageNotice(checked, profiles.length ? '' : 'No verified profiles were returned.') +
-            section('Verified public profiles', found) +
-            section('Candidate links — not confirmed (Instagram, TikTok, X, Telegram and others)',
-                manualLinks(data.manual_sources, 'profile_url')) +
-            (checkedHtml ? '<details><summary>API check status (' + checked.length +
-                ')</summary>' + checkedHtml + '</details>' : '') +
+            '<ul class="profiles-list" aria-label="Results by platform">' + rows + '</ul>' +
             '</div>';
         return;
     }

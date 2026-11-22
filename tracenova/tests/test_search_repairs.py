@@ -19,18 +19,50 @@ class UsernameTests(unittest.TestCase):
         self.assertFalse(username_search._gitlab([{"username": "abc"}], "ab"))
         self.assertTrue(username_search._bluesky({"handle": "ab.bsky.social", "did": "did:plc:abc"}, "ab"))
         self.assertFalse(username_search._bluesky({"handle": "ab-other.bsky.social", "did": "did:plc:abc"}, "ab"))
+        self.assertTrue(username_search._x({"data": {"id": "123", "username": "Ab"}}, "ab"))
+        self.assertFalse(username_search._x({"data": {"id": "123", "username": "abc"}}, "ab"))
+        self.assertTrue(username_search._youtube({"items": [{"id": "UC123"}]}, "ab"))
+        self.assertFalse(username_search._youtube({"items": [{}]}, "ab"))
+        self.assertTrue(username_search._vk({"response": {"type": "user", "object_id": 1}}, "ab"))
+        self.assertFalse(username_search._vk({"response": {"type": "group", "object_id": 1}}, "ab"))
 
-    def test_two_character_username_and_manual_not_found(self):
+    def test_two_character_username_and_unavailable_sources(self):
         async def fake_check(*args):
             name = args[2]
             return {"platform": name, "status": "not_found", "found": False}
-        with patch.object(username_search, "_check_platform", side_effect=fake_check):
+        with (patch.object(username_search, "_check_platform", side_effect=fake_check),
+              patch.dict("os.environ", {"TELEGRAM_API_ID": ""})):
             result = asyncio.run(username_search.search_username("ab"))
         self.assertEqual(result["query_type"], "username")
         self.assertEqual(result["profiles_found"], 0)
-        self.assertEqual(result["status"], "no_profiles_found")
-        self.assertTrue(any(s["platform"] == "telegram" for s in result["manual_sources"]))
-        self.assertTrue(all(s["status"] == "manual" for s in result["manual_sources"]))
+        self.assertEqual(result["status"], "partial_failure")
+        self.assertEqual(result["manual_sources"], [])
+        sources = {s["platform"]: s for s in result["sources"]}
+        for platform in ("instagram", "tiktok", "facebook", "telegram"):
+            self.assertEqual(sources[platform]["status"], "unavailable")
+            self.assertNotIn("profile_url", sources[platform])
+
+    def test_missing_provider_credentials_skip_request(self):
+        with patch.dict("os.environ", {"X_BEARER_TOKEN": "", "YOUTUBE_API_KEY": "", "VK_SERVICE_TOKEN": ""}):
+            for platform in ("x", "youtube", "vk"):
+                result = asyncio.run(username_search._check_platform(
+                    None, None, platform, username_search.PLATFORMS[platform], "ab"))
+                self.assertEqual(result["status"], "unavailable")
+                self.assertNotIn("profile_url", result)
+
+    def test_telegram_links_require_confirmed_user(self):
+        settings = {"TELEGRAM_API_ID": "123", "TELEGRAM_API_HASH": "test", "TELEGRAM_BOT_TOKEN": "test"}
+        for status in ("found", "not_found", "rate_limited"):
+            with (patch.dict("os.environ", settings),
+                  patch.object(username_search, "_resolve_telegram", new_callable=AsyncMock) as lookup):
+                lookup.return_value = status
+                result = asyncio.run(username_search._check_telegram(asyncio.Semaphore(1), "Example"))
+                lookup.assert_awaited_once_with("Example", 123, "test", "test")
+                self.assertEqual(result["status"], status)
+                if status == "found":
+                    self.assertEqual(result["profile_url"], "https://t.me/Example")
+                else:
+                    self.assertNotIn("profile_url", result)
 
     def test_unknown_platforms_are_not_false_absence(self):
         async def fake_check(*args):

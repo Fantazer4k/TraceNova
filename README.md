@@ -70,6 +70,8 @@ cp .env.example .env
 
 Never commit real API keys, passwords, tokens, cookies, or other credentials. Keep secrets in `.env` or another secret-management system.
 
+For optional exact username checks, set `X_BEARER_TOKEN` for X, `YOUTUBE_API_KEY` for YouTube, or `VK_SERVICE_TOKEN` for VK. To enable Telegram, install `Telethon==1.45.0` in the same environment and set `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and `TELEGRAM_BOT_TOKEN`. The Telegram lookup uses a bot session in memory and returns user profile links only.
+
 ## Running
 
 From the `tracenova` directory:

@@ -69,6 +69,20 @@ for (const [kind, data] of tests) {
 }
 console.log('Frontend safe-rendering tests passed (' + tests.length + ' modes).');
 
+vm.runInContext('displayResults(input)', Object.assign(context, {
+  input: {
+    query_type: 'username', status: 'success', username: 'octocat',
+    profiles: [{platform: 'github', profile_url: 'https://github.com/octocat'}],
+    sources: [{platform: 'github', status: 'found'}, {platform: 'reddit', status: 'not_found'},
+      {platform: 'instagram', status: 'unavailable'}],
+    manual_sources: [{platform: 'instagram', profile_url: 'https://www.instagram.com/octocat/'}],
+  },
+}));
+assert.match(elements.resultContent.innerHTML, /href="https:\/\/github\.com\/octocat"/);
+assert.match(elements.resultContent.innerHTML, /No user with this username was found on Reddit/);
+assert.match(elements.resultContent.innerHTML, /No verified match found on Instagram/);
+assert.doesNotMatch(elements.resultContent.innerHTML, /instagram\.com/);
+
 const modal = elements.helpModal;
 let open = false;
 let focusRestorations = 0;
