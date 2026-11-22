@@ -71,6 +71,19 @@ def _resolve_with_doh(hostname: str) -> list[str]:
     return list(dict.fromkeys(addresses))
 
 
+def is_public_unicast(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Classify an address consistently before making public network queries."""
+    if getattr(address, "scope_id", None) is not None:
+        return False
+    target = getattr(address, "ipv4_mapped", None) or address
+    return (
+        target.is_global
+        and not target.is_multicast
+        and not target.is_reserved
+        and not getattr(target, "is_site_local", False)
+    )
+
+
 def _resolve_public_addresses(hostname: str, port: int) -> list[str]:
     """Resolve a hostname and reject non-public destinations."""
     try:
@@ -96,14 +109,7 @@ def _resolve_public_addresses(hostname: str, port: int) -> list[str]:
         if getattr(address, "scope_id", None) is not None:
             raise ValueError("Scoped IP addresses are not supported.")
 
-    targets = [getattr(address, "ipv4_mapped", None) or address for address in parsed]
-    if any(
-        not address.is_global
-        or address.is_multicast
-        or address.is_reserved
-        or getattr(address, "is_site_local", False)
-        for address in targets
-    ):
+    if any(not is_public_unicast(address) for address in parsed):
         raise ValueError(
             "The URL resolves to a non-public IP address. Local and private network targets are blocked."
         )

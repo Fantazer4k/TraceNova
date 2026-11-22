@@ -10,6 +10,8 @@ import aiohttp
 import asyncio
 from typing import Dict, Optional
 
+from services.url_analyzer import is_public_unicast
+
 async def resolve_domain_to_ip(domain: str) -> Dict:
     """Resolve public A/AAAA records using the same protected DNS path as URL Search.
 
@@ -99,13 +101,14 @@ async def analyze_ip(ip_text: str) -> Dict:
 
     address = str(ip)
     info = await get_additional_ip_info(address)
-    info["address_type"] = "public" if ip.is_global else "private_or_reserved"
-    if ip.is_global:
+    public_unicast = is_public_unicast(ip)
+    info["address_type"] = "public" if public_unicast else "private_or_reserved"
+    if public_unicast:
         rdap, geo = await asyncio.gather(_rdap_ip(address), _geo_ip(address))
         info.update(rdap)
         info.update(geo)
     else:
-        info["registry_note"] = "Private/reserved address: public network metadata not applicable."
+        info["registry_note"] = "Public network metadata requires a public unicast address."
 
     return {
         "query_type": "ip",

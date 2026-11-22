@@ -368,41 +368,7 @@ async def _check_domain_mx(
                     last_error = f"DNS resolver returned HTTP {response.status}."
                     continue
 
-                data = await response.json()
-                status_code = data.get("Status")
-                if status_code not in (None, 0):
-                    last_error = f"DNS resolver returned status {status_code}."
-                    continue
-
-                answers = data.get("Answer", [])
-                mx_records = sorted(
-                    {
-                        answer.get("data")
-                        for answer in answers
-                        if answer.get("type") == 15 and answer.get("data")
-                    }
-                )
-
-                if mx_records:
-                    return {
-                        "category": "technical",
-                        "source": "DNS / MX",
-                        "status": "checked",
-                        "description": "The email domain publishes MX records.",
-                        "details": {
-                            "domain": domain,
-                            "mx_records": mx_records,
-                            "resolver": resolver,
-                        },
-                    }
-
-                return {
-                    "category": "technical",
-                    "source": "DNS / MX",
-                    "status": "no_mx",
-                    "description": "No MX record was returned for this domain.",
-                    "details": {"domain": domain, "resolver": resolver},
-                }
+                return _interpret_mx_response(await response.json(), domain, resolver)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
             last_error = f"DNS resolver unavailable: {type(exc).__name__}."
             continue
@@ -413,6 +379,68 @@ async def _check_domain_mx(
         "status": "unavailable",
         "description": last_error,
         "details": {"domain": domain},
+    }
+
+
+def _interpret_mx_response(data: object, domain: str, resolver: str) -> Dict:
+    if not isinstance(data, dict) or type(data.get("Status")) is not int or data.get("TC"):
+        raise ValueError("Invalid or truncated DNS response")
+
+    result = {
+        "category": "technical",
+        "source": "DNS / MX",
+        "details": {"domain": domain, "resolver": resolver},
+    }
+    status_code = data["Status"]
+    if status_code == 3:
+        return {
+            **result,
+            "status": "nxdomain",
+            "description": "The DNS resolver reported that the queried name does not exist (NXDOMAIN).",
+        }
+    if status_code != 0:
+        raise ValueError(f"DNS response code {status_code}")
+
+    answers = data.get("Answer", [])
+    if not isinstance(answers, list):
+        raise ValueError("Invalid DNS answer list")
+
+    mx_records = set()
+    for answer in answers:
+        if not isinstance(answer, dict) or type(answer.get("type")) is not int:
+            raise ValueError("Invalid DNS answer")
+        if answer["type"] != 15:
+            continue
+        record = answer.get("data")
+        fields = record.split() if isinstance(record, str) else []
+        if len(fields) != 2 or not re.fullmatch(r"[0-9]{1,5}", fields[0]):
+            raise ValueError("Invalid MX record")
+        preference = int(fields[0])
+        exchange = fields[1]
+        if preference > 65535 or (exchange == "." and preference != 0):
+            raise ValueError("Invalid MX preference")
+        mx_records.add(f"{preference} {exchange}")
+
+    if not mx_records:
+        return {
+            **result,
+            "status": "no_mx",
+            "description": "No explicit MX record was returned. SMTP may fall back to address records.",
+        }
+
+    result["details"]["mx_records"] = sorted(mx_records)
+    if "0 ." in mx_records:
+        if len(mx_records) != 1:
+            raise ValueError("Null MX is mixed with other MX records")
+        return {
+            **result,
+            "status": "null_mx",
+            "description": "The domain publishes a null MX, which declares that it does not accept email.",
+        }
+    return {
+        **result,
+        "status": "checked",
+        "description": "The domain publishes MX records. This does not establish mailbox existence.",
     }
 
 

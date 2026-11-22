@@ -67,17 +67,22 @@ helpIcon.addEventListener('click', () => {
     if (help) {
         document.getElementById('helpTitle').textContent = help.title;
         document.getElementById('helpText').textContent = help.text;
-        helpModal.classList.remove('hidden');
+        helpModal.showModal();
     }
 });
 
 closeHelp.addEventListener('click', () => {
-    helpModal.classList.add('hidden');
+    helpModal.close();
 });
 
-helpModal.addEventListener('click', (e) => {
-    if (e.target === helpModal) {
-        helpModal.classList.add('hidden');
+helpModal.addEventListener('close', () => helpIcon.focus());
+
+helpModal.addEventListener('click', (event) => {
+    if (event.target !== helpModal) return;
+    const bounds = helpModal.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom) {
+        helpModal.close();
     }
 });
 

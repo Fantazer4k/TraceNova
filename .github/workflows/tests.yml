@@ -19,8 +19,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python: ['3.10', '3.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: ${{ matrix.python }}
       - name: Create an isolated application environment
@@ -42,7 +42,7 @@ jobs:
       - name: Record resolved application dependencies
         run: python -m pip freeze > resolved-dependencies.txt
       - name: Upload resolved dependencies
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: dependencies-${{ matrix.os }}-py${{ matrix.python }}
           path: resolved-dependencies.txt
@@ -63,10 +63,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: '24'
+          package-manager-cache: false
       - name: Check frontend JavaScript syntax
         run: |
           node --check tracenova/frontend/static/script.js

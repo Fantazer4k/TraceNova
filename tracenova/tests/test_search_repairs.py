@@ -58,6 +58,17 @@ class PhoneTests(unittest.TestCase):
 
 
 class IPTests(unittest.TestCase):
+    def test_special_addresses_do_not_contact_public_sources(self):
+        with patch("services.ip_resolver.get_additional_ip_info", return_value={}), \
+             patch("services.ip_resolver._rdap_ip") as rdap, \
+             patch("services.ip_resolver._geo_ip") as geo:
+            for address in ("224.0.0.1", "ff02::1", "::ffff:192.168.0.1"):
+                with self.subTest(address=address):
+                    result = asyncio.run(analyze_ip(address))
+                    self.assertEqual(result["ip_info"]["address_type"], "private_or_reserved")
+        rdap.assert_not_awaited()
+        geo.assert_not_awaited()
+
     def test_private_ip_does_not_contact_public_sources(self):
         with patch("services.ip_resolver.get_additional_ip_info",
                    new_callable=AsyncMock, return_value={"reverse_dns": "N/A"}) as reverse, \

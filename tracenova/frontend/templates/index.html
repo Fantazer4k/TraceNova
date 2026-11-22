@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TraceNova - Public Digital Intelligence</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=accessible-help-1">
 </head>
 <body>
     <!-- Interactive Grid Background -->
-    <canvas id="gridCanvas"></canvas>
+    <canvas id="gridCanvas" aria-hidden="true"></canvas>
 
     <div class="container">
         <!-- Navbar -->
@@ -41,20 +41,21 @@
                                 <option value="phone">Phone Number</option>
                             </optgroup>
                         </select>
-                        <span id="helpIcon" class="help-icon" title="Click for info">?</span>
+                        <button type="button" id="helpIcon" class="help-icon"
+                                aria-label="Search help" aria-haspopup="dialog" aria-controls="helpModal">?</button>
                     </div>
                     <input type="text" id="queryInput" placeholder="Enter search query...">
                     <button id="analyzeBtn">Analyze</button>
                 </div>
 
                 <!-- Help Modal -->
-                <div id="helpModal" class="help-modal hidden">
+                <dialog id="helpModal" class="help-modal" aria-labelledby="helpTitle" aria-describedby="helpText">
                     <div class="help-content">
-                        <span id="closeHelp" class="close-help">✕</span>
+                        <button type="button" id="closeHelp" class="close-help" aria-label="Close help" autofocus>✕</button>
                         <h3 id="helpTitle"></h3>
                         <p id="helpText"></p>
                     </div>
-                </div>
+                </dialog>
             </div>
         </section>
 
@@ -64,7 +65,7 @@
         </section>
     </div>
 
-    <script src="/static/interactions.js"></script>
-    <script src="/static/script.js?v=search-security-3"></script>
+    <script src="/static/interactions.js?v=accessible-help-1"></script>
+    <script src="/static/script.js?v=accessible-help-1"></script>
 </body>
 </html>
