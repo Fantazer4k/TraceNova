@@ -11,6 +11,11 @@ const document = {
     if (!elements[id]) {
       elements[id] = {
         value: 'email',
+        attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value; },
+        removeAttribute(name) { delete this.attributes[name]; },
+        hasAttribute(name) { return Object.hasOwn(this.attributes, name); },
+        focus() {},
         classList: { remove() {}, add() {} },
         listeners: {},
         addEventListener(type, listener) { this.listeners[type] = listener; },
@@ -24,6 +29,7 @@ const document = {
 const context = vm.createContext({
   document,
   URL,
+  AbortController,
   fetch: () => { throw new Error('Network must not be used in a renderer test'); },
   alert: () => {},
 });
@@ -56,7 +62,10 @@ for (const [kind, data] of tests) {
   assert(!html.includes(injection), kind + ': raw input leaked into HTML');
   assert(!html.includes('href="javascript:'), kind + ': unsafe link in HTML');
   assert(!html.includes('src="javascript:'), kind + ': unsafe image URL');
-  if (kind === 'email') assert(html.includes('rate limited'), 'Email source status must be visible');
+  if (kind === 'email') {
+    assert(html.includes('Rate limited'), 'Email source status must be visible');
+    assert(html.includes('Partial coverage'), 'Failed sources are distinguished from an empty result');
+  }
 }
 console.log('Frontend safe-rendering tests passed (' + tests.length + ' modes).');
 
@@ -115,3 +124,50 @@ motion.matches = true;
 motion.change();
 assert.equal(frames.size, 0, 'enabling reduced motion cancels the resumed frame');
 console.log('Help dialog and canvas lifecycle tests passed.');
+
+async function checkSearchStates() {
+  const submit = () => elements.searchForm.listeners.submit({preventDefault() {}});
+  elements.queryInput.value = ' ';
+  await submit();
+  assert.equal(elements.queryInput.attributes['aria-invalid'], 'true');
+  assert.match(elements.searchStatus.textContent, /Enter a query/);
+
+  elements.queryInput.value = 'sample@example.com';
+  elements.queryInput.listeners.input();
+  assert.equal(elements.queryInput.hasAttribute('aria-invalid'), false);
+  let finish;
+  let signal;
+  context.fetch = (_url, options) => {
+    signal = options.signal;
+    return new Promise(resolve => { finish = resolve; });
+  };
+  const oldSearch = submit();
+  assert.match(elements.resultContent.innerHTML, /Analysis in progress/);
+  assert.equal(elements.results.attributes['aria-busy'], 'true');
+  elements.queryType.value = 'domain';
+  elements.queryType.listeners.change();
+  assert.equal(signal.aborted, true);
+  assert.equal(elements.analyzeBtn.disabled, false);
+
+  context.fetch = async () => ({
+    ok: true, json: async () => ({query_type: 'domain', status: 'success', domain: 'example.com'}),
+  });
+  await submit();
+  finish({ok: true, json: async () => ({query_type: 'email', email: 'Stale result'})});
+  await oldSearch;
+  assert.match(elements.resultContent.innerHTML, /Domain DNS Analysis/);
+  assert.doesNotMatch(elements.resultContent.innerHTML, /Stale result/);
+  assert.equal(elements.results.attributes['aria-busy'], 'false');
+
+  context.fetch = async () => ({
+    ok: false, status: 503, json: async () => { throw new SyntaxError(); },
+  });
+  await submit();
+  assert.match(elements.resultContent.innerHTML, /HTTP 503/);
+  assert.match(elements.searchStatus.textContent, /Analysis failed/);
+}
+
+checkSearchStates().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

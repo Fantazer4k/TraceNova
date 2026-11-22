@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TraceNova - Public Digital Intelligence</title>
-    <link rel="stylesheet" href="/static/style.css?v=accessible-help-1">
+    <link rel="stylesheet" href="/static/style.css?v=result-states-1">
 </head>
 <body>
     <!-- Interactive Grid Background -->
@@ -24,12 +24,12 @@
         <!-- Hero -->
         <section class="hero">
             <h2 class="hero-title">Understand the Internet</h2>
-            <p class="hero-subtitle">Public-source digital intelligence with verified and manual results</p>
+            <p class="hero-subtitle">Check public sources and see what each one confirms</p>
             
             <div class="search-box-wrapper">
-                <div class="search-box">
+                <form class="search-box" id="searchForm" aria-label="Public-source analysis">
                     <div class="select-wrapper">
-                        <select id="queryType">
+                        <select id="queryType" aria-label="Search type">
                             <optgroup label="Domain & Network">
                                 <option value="domain">Domain</option>
                                 <option value="url">URL</option>
@@ -44,9 +44,11 @@
                         <button type="button" id="helpIcon" class="help-icon"
                                 aria-label="Search help" aria-haspopup="dialog" aria-controls="helpModal">?</button>
                     </div>
-                    <input type="text" id="queryInput" placeholder="Enter search query...">
-                    <button id="analyzeBtn">Analyze</button>
-                </div>
+                    <input type="text" id="queryInput" aria-label="Search query"
+                           placeholder="example.com" autocomplete="off" spellcheck="false">
+                    <button type="submit" id="analyzeBtn">Analyze</button>
+                </form>
+                <p id="searchStatus" class="search-status" role="status"></p>
 
                 <!-- Help Modal -->
                 <dialog id="helpModal" class="help-modal" aria-labelledby="helpTitle" aria-describedby="helpText">
@@ -60,12 +62,12 @@
         </section>
 
         <!-- Results -->
-        <section id="results" class="results hidden">
+        <section id="results" class="results hidden" aria-label="Analysis results">
             <div id="resultContent"></div>
         </section>
     </div>
 
     <script src="/static/interactions.js?v=accessible-help-1"></script>
-    <script src="/static/script.js?v=accessible-help-1"></script>
+    <script src="/static/script.js?v=result-states-1"></script>
 </body>
 </html>

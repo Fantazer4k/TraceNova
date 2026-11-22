@@ -26,12 +26,14 @@ const resultContent = document.getElementById('resultContent');
 const helpIcon = document.getElementById('helpIcon');
 const helpModal = document.getElementById('helpModal');
 const closeHelp = document.getElementById('closeHelp');
+const searchStatus = document.getElementById('searchStatus');
+let activeRequest = null;
 
 // Help content for each search type
 const helpContent = {
     domain: {
         title: "Domain Search",
-        text: "Enter a domain name to resolve its IPv4 address and available reverse DNS data. This is not a full website security audit."
+        text: "Enter a domain name to look up IPv4 and IPv6 records and available reverse DNS data."
     },
     url: {
         title: "URL Search",
@@ -55,9 +57,9 @@ const helpContent = {
     }
 };
 
-analyzeBtn.addEventListener('click', analyze);
-queryInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') analyze();
+document.getElementById('searchForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    return analyze();
 });
 
 // Help icon functionality
@@ -87,6 +89,13 @@ helpModal.addEventListener('click', (event) => {
 });
 
 queryType.addEventListener('change', () => {
+    activeRequest?.abort();
+    activeRequest = null;
+    setLoading(false);
+    searchStatus.textContent = '';
+    queryInput.removeAttribute('aria-invalid');
+    resultsSection.classList.add('hidden');
+    resultContent.textContent = '';
     const type = queryType.value;
     const placeholders = {
         domain: 'example.com',
@@ -99,37 +108,66 @@ queryType.addEventListener('change', () => {
     queryInput.placeholder = placeholders[type] || 'Enter search query...';
 });
 
+queryInput.addEventListener('input', () => {
+    if (queryInput.hasAttribute('aria-invalid')) {
+        queryInput.removeAttribute('aria-invalid');
+        searchStatus.textContent = '';
+    }
+});
+
+function setLoading(loading) {
+    analyzeBtn.disabled = loading;
+    analyzeBtn.textContent = loading ? 'Analyzing…' : 'Analyze';
+    resultsSection.setAttribute('aria-busy', String(loading));
+}
+
 async function analyze() {
+    if (activeRequest) return;
     const query = queryInput.value.trim();
     const type = queryType.value;
 
     if (!query) {
-        alert('Please enter a query');
+        searchStatus.textContent = 'Enter a query to begin.';
+        queryInput.setAttribute('aria-invalid', 'true');
+        queryInput.focus();
         return;
     }
 
-    analyzeBtn.disabled = true;
-    analyzeBtn.textContent = 'Analyzing...';
+    queryInput.removeAttribute('aria-invalid');
+    const request = new AbortController();
+    activeRequest = request;
+    setLoading(true);
+    resultsSection.classList.remove('hidden');
+    searchStatus.textContent = 'Checking sources…';
+    resultContent.innerHTML = '<div class="result-card result-loading"><h3>Analysis in progress</h3></div>';
 
     try {
         const response = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, query_type: type })
+            body: JSON.stringify({ query, query_type: type }),
+            signal: request.signal
         });
-        const data = await response.json();
+        const data = await response.json().catch(() => null);
+        if (activeRequest !== request) return;
 
         if (!response.ok) {
-            throw new Error(data.detail || `Request failed (HTTP ${response.status})`);
+            throw new Error(typeof data?.detail === 'string' ? data.detail : `Request failed (HTTP ${response.status})`);
         }
 
         displayResults(data);
+        searchStatus.textContent = !data || typeof data !== 'object' || data.status === 'error'
+            ? 'Analysis failed. See the details below.'
+            : 'Analysis complete. Results are below.';
     } catch (error) {
-        resultsSection.classList.remove('hidden');
-        resultContent.innerHTML = `<div class="result-error"><h3>Analysis failed</h3><p>${escapeHtml(error.message)}</p></div>`;
+        if (activeRequest !== request) return;
+        searchStatus.textContent = 'Analysis failed. See the details below.';
+        resultContent.innerHTML = errorCard('Analysis failed', '', error.message);
     } finally {
-        analyzeBtn.disabled = false;
-        analyzeBtn.textContent = 'Analyze';
+        if (activeRequest === request) {
+            activeRequest = null;
+            setLoading(false);
+        }
     }
 }
 
@@ -170,9 +208,36 @@ function detailsMarkup(details) {
     ).join('') + '</div>';
 }
 
+function statusBadge(status) {
+    if (!status) return '';
+    const labels = {
+        found: 'Verified match', checked: 'Checked', checked_no_match: 'No match',
+        not_found: 'No match', no_mx: 'No MX record', null_mx: 'Null MX',
+        nxdomain: 'Domain not found', rate_limited: 'Rate limited',
+        not_configured: 'Not configured', candidates_unverified: 'Unverified candidates',
+        unavailable: 'Unavailable', timeout: 'Timed out', error: 'Error',
+        incomplete: 'Incomplete', verification_failed: 'Verification failed',
+    };
+    const tone = ['found', 'checked'].includes(status) ? 'confirmed'
+        : ['rate_limited', 'unavailable', 'timeout', 'error', 'incomplete', 'verification_failed'].includes(status)
+            ? 'attention' : 'neutral';
+    const label = Object.hasOwn(labels, status) ? labels[status] : String(status).replaceAll('_', ' ');
+    return '<span class="status-badge status-' + tone + '">' + escapeHtml(label) + '</span>';
+}
+
+function coverageNotice(sources, emptyMessage) {
+    const incomplete = sources.some(source => source && [
+        'unavailable', 'timeout', 'error', 'rate_limited', 'incomplete',
+    ].includes(source.status));
+    if (incomplete) {
+        return '<p class="result-notice result-notice-attention"><strong>Partial coverage.</strong> ' +
+            'Some sources could not complete their checks. See the source statuses below.</p>';
+    }
+    return emptyMessage ? '<p class="result-notice">' + escapeHtml(emptyMessage) + '</p>' : '';
+}
+
 function sourceCard(source) {
     if (!source || typeof source !== 'object') return '';
-    const status = source.status ? String(source.status).replaceAll('_', ' ') : '';
     const profiles = Array.isArray(source.profiles) ? source.profiles : [];
     const breaches = Array.isArray(source.breaches) ? source.breaches : [];
     const webResults = Array.isArray(source.results) ? source.results : [];
@@ -184,7 +249,7 @@ function sourceCard(source) {
     }).join('');
     return '<div class="email-source-item"><div class="source-header"><span class="source-badge">' +
         escapeHtml(source.icon || '•') + ' ' + escapeHtml(source.source || source.platform || 'Source') +
-        '</span>' + (status ? '<span class="status-badge">' + escapeHtml(status) + '</span>' : '') +
+        '</span>' + statusBadge(source.status) +
         '</div><div class="source-content">' +
         (source.description ? '<p class="source-description">' + escapeHtml(source.description) + '</p>' : '') +
         (source.note ? '<p class="source-note">' + escapeHtml(source.note) + '</p>' : '') +
@@ -198,7 +263,8 @@ function sourceCard(source) {
 }
 
 function section(title, content) {
-    return content ? '<h4>' + escapeHtml(title) + '</h4><div class="email-sources-list">' + content + '</div>' : '';
+    return content ? '<section class="result-group"><h4>' + escapeHtml(title) +
+        '</h4><div class="email-sources-list">' + content + '</div></section>' : '';
 }
 
 function manualLinks(items, urlField) {
@@ -278,13 +344,14 @@ function displayResults(data) {
             externalLink(p.profile_url, 'Verified public profile', 'profile-link') + '</div>').join('');
         const checkedHtml = checked.map(p => '<div class="profile-item">' +
             '<span class="platform-badge">' + escapeHtml(p.platform) + '</span> ' +
-            '<span class="status-badge">' + escapeHtml(p.status) + '</span>' +
+            statusBadge(p.status) +
             (p.error ? ' <span class="source-note">' + escapeHtml(p.error) + '</span>' : '') +
             '</div>').join('');
         resultContent.innerHTML = '<div class="result-card"><h3>Username: ' +
             escapeHtml(data.username) + '</h3>' +
             field('Verified profiles', profiles.length) +
             field('Summary', data.message) +
+            coverageNotice(checked, profiles.length ? '' : 'No verified profiles were returned.') +
             section('Verified public profiles', found) +
             section('Candidate links — not confirmed (Instagram, TikTok, X, Telegram and others)',
                 manualLinks(data.manual_sources, 'profile_url')) +
@@ -308,12 +375,13 @@ function displayResults(data) {
 
     if (kind === 'email') {
         const confirmed = (Array.isArray(data.found_in_sources) ? data.found_in_sources : []).map(sourceCard).join('');
-        const checks = (Array.isArray(data.technical_checks) ? data.technical_checks : []).map(sourceCard).join('');
+        const technical = Array.isArray(data.technical_checks) ? data.technical_checks : [];
+        const checks = technical.map(sourceCard).join('');
         resultContent.innerHTML = '<div class="result-card"><h3>Email Search</h3>' +
             field('Email', data.email) + field('Domain', data.domain) +
             field('Summary', data.summary) +
-            (confirmed ? section('Verified public sources', confirmed) :
-                '<p class="source-note">No confirmed matches; this does not establish absence.</p>') +
+            coverageNotice(technical, confirmed ? '' : 'No confirmed matches were returned.') +
+            section('Verified public sources', confirmed) +
             section('Technical checks', checks) +
             section('Manual searches — unverified', manualLinks(data.manual_sources, 'source_url')) +
             '</div>';

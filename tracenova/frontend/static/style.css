@@ -144,7 +144,7 @@ body {
     top: 0;
     left: 50%;
     transform: translateX(-50%);
-    width: 800px;
+    width: min(800px, 100%);
     height: 400px;
     background: conic-gradient(from 180deg, rgba(124, 145, 182, 0.3) 0%, transparent 70%);
     filter: blur(80px);
@@ -187,18 +187,15 @@ body {
 }
 
 .select-wrapper {
-    position: relative;
     display: flex;
     align-items: center;
+    gap: 8px;
 }
 
 .help-icon {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 20px;
-    height: 20px;
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
     background: var(--void-violet);
     color: white;
     border-radius: 50%;
@@ -211,18 +208,29 @@ body {
     font-size: 12px;
     font-weight: bold;
     transition: all 0.3s ease;
-    z-index: 10;
 }
 
 .help-icon:hover {
     background: var(--violet-dark);
-    transform: translateY(-50%) scale(1.1);
+    transform: scale(1.06);
 }
 
 .search-box:focus-within {
     border-color: rgba(102, 58, 243, 0.3);
     box-shadow: inset 0 0 20px rgba(102, 58, 243, 0.1),
                 0 0 20px rgba(102, 58, 243, 0.1);
+}
+
+.search-status {
+    color: var(--moon-mist);
+    font-size: 14px;
+    min-height: 1.5em;
+    margin: 10px 0 0;
+    text-align: left;
+}
+
+#queryInput[aria-invalid="true"] {
+    border-color: #fca5a5;
 }
 
 #queryType,
@@ -246,6 +254,7 @@ body {
 
 #queryInput {
     flex: 1;
+    min-width: 0;
 }
 
 #queryType option {
@@ -334,6 +343,30 @@ body {
     color: var(--ice-highlight);
     font-weight: 500;
     letter-spacing: -0.5px;
+}
+
+.result-card,
+.result-error {
+    overflow-wrap: anywhere;
+}
+
+.result-loading h3 {
+    margin-bottom: 0;
+}
+
+.result-notice {
+    margin: 16px 0;
+    padding: 10px 12px;
+    color: var(--frost-glow);
+    background: rgba(186, 215, 247, 0.08);
+    border-left: 2px solid var(--moon-mist);
+    border-radius: 6px;
+}
+
+.result-notice-attention {
+    color: #ffdfa0;
+    border-left-color: #eebd66;
+    background: rgba(238, 189, 102, 0.09);
 }
 
 .result-item {
@@ -427,6 +460,19 @@ body {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.6px;
+    display: inline-block;
+    color: #dbe7f6;
+    background: #28344a;
+}
+
+.status-badge.status-confirmed {
+    color: #b4f4cf;
+    background: #193c32;
+}
+
+.status-badge.status-attention {
+    color: #ffdfa0;
+    background: #47351f;
 }
 
 .status-badge.found {
@@ -443,7 +489,7 @@ body {
 
 .profile-link {
     display: block;
-    color: var(--void-violet);
+    color: #bca7ff;
     text-decoration: none;
     font-size: 13px;
     word-break: break-all;
@@ -477,7 +523,15 @@ body {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    margin-top: 20px;
+    margin-top: 10px;
+}
+
+.result-group {
+    margin-top: 22px;
+}
+
+.result-group h4 {
+    color: var(--ice-highlight);
 }
 
 .email-source-item {
@@ -495,6 +549,7 @@ body {
 
 .source-header {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     align-items: center;
     margin-bottom: 12px;
@@ -604,7 +659,7 @@ body {
 
 .source-link {
     display: inline-block;
-    color: var(--void-violet);
+    color: #bca7ff;
     text-decoration: none;
     font-size: 12px;
     font-weight: 600;
@@ -780,7 +835,11 @@ body {
 }
 
 .help-icon:focus-visible,
-.close-help:focus-visible {
+.close-help:focus-visible,
+#queryType:focus-visible,
+#queryInput:focus-visible,
+#analyzeBtn:focus-visible,
+.results summary:focus-visible {
     outline: 2px solid var(--ice-highlight);
     outline-offset: 2px;
 }
@@ -818,6 +877,7 @@ body {
     #queryType,
     #queryInput {
         width: 100%;
+        min-width: 0;
     }
 
     .result-card {
@@ -828,6 +888,33 @@ body {
         flex-direction: column;
         align-items: flex-start;
         gap: 12px;
+    }
+}
+
+@media (max-width: 480px) {
+    .container {
+        padding-inline: 16px;
+    }
+
+    .hero {
+        padding-block: 36px 40px;
+    }
+
+    .hero-title {
+        font-size: 36px;
+    }
+
+    .hero-subtitle {
+        margin-bottom: 24px;
+    }
+
+    .results {
+        padding-block: 16px 40px;
+    }
+
+    .result-card,
+    .result-error {
+        padding: 18px;
     }
 }
 
