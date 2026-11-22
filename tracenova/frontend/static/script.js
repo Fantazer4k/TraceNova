@@ -20,6 +20,7 @@ function safeExternalUrl(value) {
 
 const analyzeBtn = document.getElementById('analyzeBtn');
 const queryInput = document.getElementById('queryInput');
+const queryLabel = document.getElementById('queryLabel');
 const queryType = document.getElementById('queryType');
 const resultsSection = document.getElementById('results');
 const resultContent = document.getElementById('resultContent');
@@ -97,15 +98,17 @@ queryType.addEventListener('change', () => {
     resultsSection.classList.add('hidden');
     resultContent.textContent = '';
     const type = queryType.value;
-    const placeholders = {
-        domain: 'example.com',
-        url: 'https://example.com',
-        ip: '8.8.8.8',
-        username: 'username',
-        email: 'email@example.com',
-        phone: '+353851234567'
+    const fields = {
+        domain: ['Domain name', 'example.com'],
+        url: ['URL', 'https://example.com'],
+        ip: ['IP address', '8.8.8.8'],
+        username: ['Username', 'username'],
+        email: ['Email address', 'email@example.com'],
+        phone: ['Phone number', '+353851234567']
     };
-    queryInput.placeholder = placeholders[type] || 'Enter search query...';
+    const [label, placeholder] = fields[type] || ['Search query', 'Enter search query'];
+    queryLabel.textContent = label;
+    queryInput.placeholder = placeholder;
 });
 
 queryInput.addEventListener('input', () => {
@@ -113,6 +116,13 @@ queryInput.addEventListener('input', () => {
         queryInput.removeAttribute('aria-invalid');
         searchStatus.textContent = '';
     }
+});
+
+document.getElementById('exampleQuery')?.addEventListener('click', () => {
+    queryType.value = 'domain';
+    queryType.dispatchEvent(new Event('change'));
+    queryInput.value = 'example.com';
+    queryInput.focus();
 });
 
 function setLoading(loading) {
@@ -139,7 +149,13 @@ async function analyze() {
     setLoading(true);
     resultsSection.classList.remove('hidden');
     searchStatus.textContent = 'Checking sources…';
-    resultContent.innerHTML = '<div class="result-card result-loading"><h3>Analysis in progress</h3></div>';
+    resultContent.innerHTML = `
+        <div class="result-card result-loading">
+            <h3>Analysis in progress</h3>
+            <div class="result-skeleton" aria-hidden="true">
+                <span></span><span></span><span></span>
+            </div>
+        </div>`;
 
     try {
         const response = await fetch('/api/analyze', {

@@ -4,70 +4,77 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TraceNova - Public Digital Intelligence</title>
-    <link rel="stylesheet" href="/static/style.css?v=result-states-1">
+    <link rel="stylesheet" href="/static/style.css?v=report-layout-1">
 </head>
 <body>
-    <!-- Interactive Grid Background -->
-    <canvas id="gridCanvas" aria-hidden="true"></canvas>
-
     <div class="container">
         <!-- Navbar -->
         <nav class="navbar">
             <div class="navbar-content">
-                <h1 class="logo">TraceNova</h1>
+                <a class="logo" href="/">Trace<span>Nova</span></a>
                 <div class="nav-right">
-                    <a href="https://github.com/Fantazer4k/TraceNova" target="_blank" class="nav-link">Docs</a>
+                    <a href="https://github.com/Fantazer4k/TraceNova" class="nav-link">Project on GitHub</a>
                 </div>
             </div>
         </nav>
 
-        <!-- Hero -->
-        <section class="hero">
-            <h2 class="hero-title">Understand the Internet</h2>
-            <p class="hero-subtitle">Check public sources and see what each one confirms</p>
-            
-            <div class="search-box-wrapper">
-                <form class="search-box" id="searchForm" aria-label="Public-source analysis">
-                    <div class="select-wrapper">
-                        <select id="queryType" aria-label="Search type">
-                            <optgroup label="Domain & Network">
-                                <option value="domain">Domain</option>
-                                <option value="url">URL</option>
-                                <option value="ip">IP Address</option>
-                            </optgroup>
-                            <optgroup label="People & Accounts">
-                                <option value="username">Username</option>
-                                <option value="email">Email</option>
-                                <option value="phone">Phone Number</option>
-                            </optgroup>
-                        </select>
-                        <button type="button" id="helpIcon" class="help-icon"
-                                aria-label="Search help" aria-haspopup="dialog" aria-controls="helpModal">?</button>
-                    </div>
-                    <input type="text" id="queryInput" aria-label="Search query"
-                           placeholder="example.com" autocomplete="off" spellcheck="false">
-                    <button type="submit" id="analyzeBtn">Analyze</button>
-                </form>
-                <p id="searchStatus" class="search-status" role="status"></p>
+        <main>
+            <section class="hero" aria-labelledby="heroTitle">
+                <div class="hero-main">
+                    <h1 class="hero-title" id="heroTitle">Look up public records</h1>
+                    <p class="hero-subtitle">Check DNS and network records, or see what public sources return for a username, email address, or phone number.</p>
 
-                <!-- Help Modal -->
-                <dialog id="helpModal" class="help-modal" aria-labelledby="helpTitle" aria-describedby="helpText">
-                    <div class="help-content">
-                        <button type="button" id="closeHelp" class="close-help" aria-label="Close help" autofocus>✕</button>
-                        <h3 id="helpTitle"></h3>
-                        <p id="helpText"></p>
-                    </div>
-                </dialog>
-            </div>
-        </section>
+                    <div class="search-box-wrapper">
+                        <form class="search-box" id="searchForm" aria-label="Public-source analysis">
+                            <div class="select-wrapper">
+                                <select id="queryType" aria-label="Search type">
+                                    <optgroup label="Domain & Network">
+                                        <option value="domain">Domain</option>
+                                        <option value="url">URL</option>
+                                        <option value="ip">IP Address</option>
+                                    </optgroup>
+                                    <optgroup label="People & Accounts">
+                                        <option value="username">Username</option>
+                                        <option value="email">Email</option>
+                                        <option value="phone">Phone Number</option>
+                                    </optgroup>
+                                </select>
+                                <button type="button" id="helpIcon" class="help-icon"
+                                        aria-label="Search help" aria-haspopup="dialog" aria-controls="helpModal">?</button>
+                            </div>
+                            <div class="query-field">
+                                <label id="queryLabel" for="queryInput">Domain name</label>
+                                <input type="text" id="queryInput" placeholder="example.com"
+                                       autocomplete="off" spellcheck="false">
+                            </div>
+                            <button type="submit" id="analyzeBtn">Analyze</button>
+                        </form>
+                        <p id="searchStatus" class="search-status" role="status"></p>
 
-        <!-- Results -->
-        <section id="results" class="results hidden" aria-label="Analysis results">
-            <div id="resultContent"></div>
-        </section>
+                        <!-- Help Modal -->
+                        <dialog id="helpModal" class="help-modal" aria-labelledby="helpTitle" aria-describedby="helpText">
+                            <div class="help-content">
+                                <button type="button" id="closeHelp" class="close-help" aria-label="Close help" autofocus>&times;</button>
+                                <h3 id="helpTitle"></h3>
+                                <p id="helpText"></p>
+                            </div>
+                        </dialog>
+                    </div>
+                </div>
+                <aside class="example" aria-labelledby="exampleTitle">
+                    <h2 id="exampleTitle">Try a domain lookup</h2>
+                    <p>Look up DNS records for <code>example.com</code>, a domain reserved for documentation.</p>
+                    <button type="button" id="exampleQuery" class="example-button">Use example.com</button>
+                </aside>
+            </section>
+
+            <!-- Results -->
+            <section id="results" class="results hidden" aria-label="Analysis results">
+                <div id="resultContent"></div>
+            </section>
+        </main>
     </div>
 
-    <script src="/static/interactions.js?v=accessible-help-1"></script>
-    <script src="/static/script.js?v=result-states-1"></script>
+    <script src="/static/script.js?v=report-layout-1"></script>
 </body>
 </html>
