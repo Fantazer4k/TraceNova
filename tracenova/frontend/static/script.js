@@ -28,7 +28,25 @@ const helpIcon = document.getElementById('helpIcon');
 const helpModal = document.getElementById('helpModal');
 const closeHelp = document.getElementById('closeHelp');
 const searchStatus = document.getElementById('searchStatus');
+const exampleTitle = document.getElementById('exampleTitle');
+const exampleDescription = document.getElementById('exampleDescription');
+const exampleQuery = document.getElementById('exampleQuery');
 let activeRequest = null;
+
+const lookupExamples = {
+    domain: ['Domain name', 'example.com', 'Try a domain lookup',
+        'Look up DNS records for example.com, a domain reserved for documentation.'],
+    url: ['URL', 'https://example.com', 'Try a URL lookup',
+        'Check DNS records and HTTPS certificate details for https://example.com.'],
+    ip: ['IP address', '192.0.2.1', 'Try an IP lookup',
+        'Check 192.0.2.1, an address reserved for documentation.'],
+    username: ['Username', 'octocat', 'Try a username lookup',
+        'Look for exact public matches for octocat, GitHub’s example account.'],
+    email: ['Email address', 'email@example.com', 'Try an email lookup',
+        'Check email@example.com, an illustrative address on a documentation domain.'],
+    phone: ['Phone number', '+123456789', 'Try a phone lookup',
+        'See how TraceNova reports a number that does not fit its numbering plan.']
+};
 
 // Help content for each search type
 const helpContent = {
@@ -97,18 +115,12 @@ queryType.addEventListener('change', () => {
     queryInput.removeAttribute('aria-invalid');
     resultsSection.classList.add('hidden');
     resultContent.textContent = '';
-    const type = queryType.value;
-    const fields = {
-        domain: ['Domain name', 'example.com'],
-        url: ['URL', 'https://example.com'],
-        ip: ['IP address', '8.8.8.8'],
-        username: ['Username', 'username'],
-        email: ['Email address', 'email@example.com'],
-        phone: ['Phone number', '+353851234567']
-    };
-    const [label, placeholder] = fields[type] || ['Search query', 'Enter search query'];
+    const [label, placeholder, title, description] = lookupExamples[queryType.value] || lookupExamples.domain;
     queryLabel.textContent = label;
     queryInput.placeholder = placeholder;
+    exampleTitle.textContent = title;
+    exampleDescription.textContent = description;
+    exampleQuery.textContent = 'Use ' + placeholder;
 });
 
 queryInput.addEventListener('input', () => {
@@ -118,10 +130,13 @@ queryInput.addEventListener('input', () => {
     }
 });
 
-document.getElementById('exampleQuery')?.addEventListener('click', () => {
-    queryType.value = 'domain';
-    queryType.dispatchEvent(new Event('change'));
-    queryInput.value = 'example.com';
+exampleQuery.addEventListener('click', () => {
+    const [, value] = lookupExamples[queryType.value] || lookupExamples.domain;
+    queryInput.value = value;
+    if (queryInput.hasAttribute('aria-invalid')) {
+        queryInput.removeAttribute('aria-invalid');
+        searchStatus.textContent = '';
+    }
     queryInput.focus();
 });
 
@@ -369,9 +384,18 @@ function displayResults(data) {
             const name = names.get(platform) || platform;
             const url = matches.get(platform)?.profile_url;
             const link = externalLink(url, url, 'profile-link');
-            const message = source.status === 'not_found'
-                ? 'No user with this username was found on ' + name + '.'
-                : 'No verified match found on ' + name + '.';
+            let message = 'Could not verify a match on ' + name + '.';
+            if (source.status === 'not_found') {
+                message = 'No user with this username was found on ' + name + '.';
+            } else if (source.reason === 'not_configured') {
+                message = name + ' lookup is not configured.';
+            } else if (source.reason === 'unsupported') {
+                message = name + ' lookup is not supported.';
+            } else if (source.status === 'rate_limited') {
+                message = name + ' temporarily limited requests.';
+            } else if (source.status === 'timeout') {
+                message = name + ' did not respond in time.';
+            }
             return '<li class="profile-item">' +
                 (link ? '<span class="platform-badge">' + escapeHtml(name) + '</span> ' + link
                     : escapeHtml(message)) + '</li>';

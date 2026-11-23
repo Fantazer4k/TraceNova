@@ -133,7 +133,8 @@ async def _check_platform(session: aiohttp.ClientSession, sem: asyncio.Semaphore
     base = {"platform": platform, "username": name, "found": False}
     options = _lookup_options(platform, config)
     if options is None:
-        return {**base, "status": "unavailable", "error": "Provider credentials are not configured"}
+        return {**base, "status": "unavailable", "reason": "not_configured",
+                "error": "Provider credentials are not configured"}
     try:
         async with sem:
             async with session.get(config["url"].format(name=encoded), **options) as response:
@@ -213,13 +214,15 @@ async def _check_telegram(sem: asyncio.Semaphore, name: str) -> Dict:
     api_hash = os.getenv("TELEGRAM_API_HASH", "").strip()
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not (api_id.isascii() and api_id.isdecimal() and api_hash and token):
-        return {**base, "status": "unavailable", "error": "Provider credentials are not configured"}
+        return {**base, "status": "unavailable", "reason": "not_configured",
+                "error": "Provider credentials are not configured"}
     try:
         async with sem:
             status = await asyncio.wait_for(
                 _resolve_telegram(name, int(api_id), api_hash, token), REQUEST_TIMEOUT)
     except ImportError:
-        return {**base, "status": "unavailable", "error": "Optional Telethon dependency is not installed"}
+        return {**base, "status": "unavailable", "reason": "not_configured",
+                "error": "Optional Telethon dependency is not installed"}
     except asyncio.TimeoutError:
         return {**base, "status": "timeout", "error": "Request timed out"}
     except (OSError, ValueError):
@@ -245,7 +248,8 @@ async def search_username(username: str) -> Dict:
     found = [item for item in results if item["status"] == "found"]
     failed = [item for item in results if item["status"] in ("error", "timeout", "unavailable", "rate_limited")]
     unsupported = [
-        {"platform": platform, "username": username, "status": "unavailable", "found": False}
+        {"platform": platform, "username": username, "status": "unavailable",
+         "reason": "unsupported", "found": False}
         for platform in UNSUPPORTED_PLATFORMS
     ]
     message = "Verified %d public profile(s)." % len(found)

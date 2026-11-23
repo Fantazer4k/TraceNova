@@ -73,14 +73,18 @@ vm.runInContext('displayResults(input)', Object.assign(context, {
   input: {
     query_type: 'username', status: 'success', username: 'octocat',
     profiles: [{platform: 'github', profile_url: 'https://github.com/octocat'}],
-    sources: [{platform: 'github', status: 'found'}, {platform: 'reddit', status: 'not_found'},
-      {platform: 'instagram', status: 'unavailable'}],
+    sources: [{platform: 'github', status: 'found'}, {platform: 'gitlab', status: 'not_found'},
+      {platform: 'reddit', status: 'unavailable'},
+      {platform: 'youtube', status: 'unavailable', reason: 'not_configured'},
+      {platform: 'instagram', status: 'unavailable', reason: 'unsupported'}],
     manual_sources: [{platform: 'instagram', profile_url: 'https://www.instagram.com/octocat/'}],
   },
 }));
 assert.match(elements.resultContent.innerHTML, /href="https:\/\/github\.com\/octocat"/);
-assert.match(elements.resultContent.innerHTML, /No user with this username was found on Reddit/);
-assert.match(elements.resultContent.innerHTML, /No verified match found on Instagram/);
+assert.match(elements.resultContent.innerHTML, /No user with this username was found on GitLab/);
+assert.match(elements.resultContent.innerHTML, /Could not verify a match on Reddit/);
+assert.match(elements.resultContent.innerHTML, /YouTube lookup is not configured/);
+assert.match(elements.resultContent.innerHTML, /Instagram lookup is not supported/);
 assert.doesNotMatch(elements.resultContent.innerHTML, /instagram\.com/);
 
 const modal = elements.helpModal;
@@ -103,6 +107,24 @@ elements.helpIcon.listeners.click();
 elements.closeHelp.listeners.click();
 assert.equal(open, false);
 assert.equal(focusRestorations, 2);
+
+for (const [type, title, value] of [
+  ['domain', 'Try a domain lookup', 'example.com'],
+  ['url', 'Try a URL lookup', 'https://example.com'],
+  ['ip', 'Try an IP lookup', '192.0.2.1'],
+  ['username', 'Try a username lookup', 'octocat'],
+  ['email', 'Try an email lookup', 'email@example.com'],
+  ['phone', 'Try a phone lookup', '+123456789'],
+]) {
+  elements.queryType.value = type;
+  elements.queryType.listeners.change();
+  assert.equal(elements.exampleTitle.textContent, title);
+  assert.equal(elements.queryInput.placeholder, value);
+  assert.equal(elements.exampleQuery.textContent, 'Use ' + value);
+  elements.exampleQuery.listeners.click();
+  assert.equal(elements.queryInput.value, value);
+  assert.equal(elements.queryType.value, type);
+}
 
 const animation = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'static', 'interactions.js'), 'utf8');
 const frames = new Map();
