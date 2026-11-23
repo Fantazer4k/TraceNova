@@ -30,6 +30,25 @@ class _FakeSession:
         return _FakeResponse(self.status, self.payload)
 
 
+class ShodanTests(unittest.TestCase):
+    def test_returns_only_indexed_hostnames_and_distinct_provider_statuses(self):
+        address = "8.8.8.8"
+        for status, payload, expected in (
+            (200, {"ip": address, "hostnames": ["dns.google"], "ports": [53], "vulns": ["example"]},
+             {"status": "checked", "hostnames": ["dns.google"]}),
+            (404, {}, {"status": "not_found"}),
+            (429, {}, {"status": "rate_limited"}),
+            (503, {}, {"status": "unavailable"}),
+            (200, {"ip": "1.1.1.1", "hostnames": ["wrong.example"]}, {"status": "unavailable"}),
+        ):
+            with self.subTest(status=status, expected=expected):
+                session = _FakeSession(status, payload)
+                context = AsyncMock()
+                context.__aenter__.return_value = session
+                with patch.object(ip_resolver.aiohttp, "ClientSession", return_value=context):
+                    self.assertEqual(asyncio.run(ip_resolver._shodan_ip(address)), expected)
+
+
 class EmailConfidenceTests(unittest.TestCase):
     def test_empty_rate_limited_and_invalid_responses_are_distinct(self):
         for status, body, expected in (

@@ -115,10 +115,7 @@ async def search_email(email: str) -> Dict:
         technical_checks.append(_source_check(
             "Brave Search", "not_configured", "Optional web search API key is not configured.",
         ))
-        manual_sources.extend([
-            _manual_google_search(email),
-            _manual_social_search(email),
-        ])
+    manual_sources.extend(_manual_web_searches(email))
 
     found_sources = _deduplicate_sources(found_sources)
     found_sources.sort(key=lambda item: item.get("priority", 0), reverse=True)
@@ -572,29 +569,14 @@ def _deduplicate_sources(sources: List[Dict]) -> List[Dict]:
     return unique
 
 
-def _manual_google_search(email: str) -> Dict:
-    return {
-        "status": "manual",
-        "source": "Google Search",
-        "source_url": f"https://www.google.com/search?q=%22{quote(email)}%22",
-        "icon": "🔍",
-        "description": "Manual web search for public mentions not covered by an API.",
-        "type": "web_search",
-        "priority": 50,
-    }
-
-
-def _manual_social_search(email: str) -> Dict:
-    query = (
-        f'%22{quote(email)}%22+site%3Atwitter.com+OR+site%3Areddit.com+'
-        f'site%3Alinkedin.com+OR+site%3Agithub.com'
-    )
-    return {
-        "status": "manual",
-        "source": "Public Web Search",
-        "source_url": f"https://www.google.com/search?q={query}",
-        "icon": "🌐",
-        "description": "Fallback search for public mentions on indexed websites.",
-        "type": "web_search",
-        "priority": 45,
-    }
+def _manual_web_searches(email: str) -> List[Dict]:
+    query = quote(f'"{email}"', safe="")
+    return [
+        {"status": "manual", "source": source, "source_url": base_url + query,
+         "type": "web_search", "description": "Search indexed pages for the exact address."}
+        for source, base_url in (
+            ("Google Search", "https://www.google.com/search?q="),
+            ("Bing", "https://www.bing.com/search?q="),
+            ("DuckDuckGo", "https://duckduckgo.com/?q="),
+        )
+    ]

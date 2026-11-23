@@ -93,25 +93,29 @@ class IPTests(unittest.TestCase):
     def test_special_addresses_do_not_contact_public_sources(self):
         with patch("services.ip_resolver.get_additional_ip_info", return_value={}), \
              patch("services.ip_resolver._rdap_ip") as rdap, \
-             patch("services.ip_resolver._geo_ip") as geo:
+             patch("services.ip_resolver._geo_ip") as geo, \
+             patch("services.ip_resolver._shodan_ip") as shodan:
             for address in ("224.0.0.1", "ff02::1", "::ffff:192.168.0.1"):
                 with self.subTest(address=address):
                     result = asyncio.run(analyze_ip(address))
                     self.assertEqual(result["ip_info"]["address_type"], "private_or_reserved")
         rdap.assert_not_awaited()
         geo.assert_not_awaited()
+        shodan.assert_not_awaited()
 
     def test_private_ip_does_not_contact_public_sources(self):
         with patch("services.ip_resolver.get_additional_ip_info",
                    new_callable=AsyncMock, return_value={"reverse_dns": "N/A"}) as reverse, \
              patch("services.ip_resolver._rdap_ip", new_callable=AsyncMock) as rdap, \
-             patch("services.ip_resolver._geo_ip", new_callable=AsyncMock) as geo:
+             patch("services.ip_resolver._geo_ip", new_callable=AsyncMock) as geo, \
+             patch("services.ip_resolver._shodan_ip") as shodan:
             result = asyncio.run(analyze_ip("192.168.0.1"))
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["ip_info"]["address_type"], "private_or_reserved")
         reverse.assert_awaited_once()
         rdap.assert_not_awaited()
         geo.assert_not_awaited()
+        shodan.assert_not_awaited()
 
     def test_public_ip_sources_are_separate(self):
         with patch("services.ip_resolver.get_additional_ip_info",
@@ -119,10 +123,14 @@ class IPTests(unittest.TestCase):
              patch("services.ip_resolver._rdap_ip", new_callable=AsyncMock,
                    return_value={"network_name": "Example Network"}), \
              patch("services.ip_resolver._geo_ip", new_callable=AsyncMock,
-                   return_value={"asn": 15169, "geolocation_source": "test"}):
+                   return_value={"asn": 15169, "geolocation_source": "test"}), \
+             patch("services.ip_resolver._shodan_ip",
+                   return_value={"status": "checked", "hostnames": ["dns.google"]}) as shodan:
             result = asyncio.run(analyze_ip("8.8.8.8"))
         self.assertEqual(result["ip_info"]["asn"], 15169)
         self.assertEqual(result["ip_info"]["network_name"], "Example Network")
+        self.assertEqual(result["ip_info"]["shodan"]["hostnames"], ["dns.google"])
+        shodan.assert_awaited_once_with("8.8.8.8")
 
     def test_reject_malformed_ip(self):
         result = asyncio.run(analyze_ip("not-an-ip"))

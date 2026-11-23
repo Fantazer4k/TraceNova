@@ -98,6 +98,8 @@ combination and audits those versions with pip-audit.
 
 TraceNova is designed around public and permitted information sources. Results may be incomplete or inaccurate, and a matching username, email, or phone number does not prove that two records belong to the same person.
 
+IP Search sends public IP addresses to Shodan InternetDB for indexed hostnames. Email Search includes optional Brave Search results and external Google, Bing, and DuckDuckGo links. Opening one of those links shares the queried address with that search provider.
+
 Respect the terms of service and applicable laws of every service you query.
 
 ## Status

@@ -256,15 +256,16 @@ function statusBadge(status) {
     return '<span class="status-badge status-' + tone + '">' + escapeHtml(label) + '</span>';
 }
 
-function coverageNotice(sources, emptyMessage) {
-    const incomplete = sources.some(source => source && [
-        'unavailable', 'timeout', 'error', 'rate_limited', 'incomplete',
+function coverageNotice(sources) {
+    const incomplete = sources.filter(source => source && [
+        'unavailable', 'timeout', 'error', 'rate_limited', 'incomplete', 'not_configured',
     ].includes(source.status));
-    if (incomplete) {
+    if (incomplete.length) {
+        const names = incomplete.map(source => source.source || source.platform || 'Unknown source').join(', ');
         return '<p class="result-notice result-notice-attention"><strong>Partial coverage.</strong> ' +
-            'Some sources could not complete their checks. See the source statuses below.</p>';
+            'Checks were unavailable or incomplete for ' + escapeHtml(names) + '.</p>';
     }
-    return emptyMessage ? '<p class="result-notice">' + escapeHtml(emptyMessage) + '</p>' : '';
+    return '';
 }
 
 function sourceCard(source) {
@@ -279,7 +280,7 @@ function sourceCard(source) {
             externalLink(p.profile_url, p.username || 'Public profile', 'profile-link') + '</div>';
     }).join('');
     return '<div class="email-source-item"><div class="source-header"><span class="source-badge">' +
-        escapeHtml(source.icon || '•') + ' ' + escapeHtml(source.source || source.platform || 'Source') +
+        escapeHtml(source.source || source.platform || 'Source') +
         '</span>' + statusBadge(source.status) +
         '</div><div class="source-content">' +
         (source.description ? '<p class="source-description">' + escapeHtml(source.description) + '</p>' : '') +
@@ -296,6 +297,11 @@ function sourceCard(source) {
 function section(title, content) {
     return content ? '<section class="result-group"><h4>' + escapeHtml(title) +
         '</h4><div class="email-sources-list">' + content + '</div></section>' : '';
+}
+
+function detailsSection(title, content) {
+    return content ? '<details class="result-group"><summary>' + escapeHtml(title) +
+        '</summary><div class="email-sources-list">' + content + '</div></details>' : '';
 }
 
 function manualLinks(items, urlField) {
@@ -351,6 +357,9 @@ function displayResults(data) {
             field('Approximate location source', ip.geolocation_source) +
             field('Registry note', ip.registry_note) +
             field('Geolocation note', ip.geolocation_note) +
+            (ip.shodan ? section('Shodan InternetDB', statusBadge(ip.shodan.status) +
+                field('Indexed hostnames', ip.shodan.hostnames) +
+                '<p class="source-note">Hostnames come from Shodan’s index and may be out of date.</p>') : '') +
             '<p class="source-note">Approximate IP geolocation is not a precise physical location.</p>' +
             field('Summary', data.message) + '</div>';
         return;
@@ -410,11 +419,12 @@ function displayResults(data) {
     if (kind === 'phone') {
         const confirmed = (Array.isArray(data.found_in_sources) ? data.found_in_sources : []).map(sourceCard).join('');
         const info = (Array.isArray(data.info_sources) ? data.info_sources : []).map(sourceCard).join('');
+        const manual = manualLinks(data.manual_sources, 'source_url');
         resultContent.innerHTML = '<div class="result-card"><h3>Phone Search</h3>' +
-            field('Number', data.phone) + field('Summary', data.summary) +
-            section('Verified public matches', confirmed) +
-            section('Technical number information (not public matches)', info) +
-            section('Manual searches — unverified', manualLinks(data.manual_sources, 'source_url')) +
+            field('Number', data.phone) +
+            section('Numbering plan', info) +
+            section('Public matches', confirmed || '<p>TraceNova did not run an automated public search for this number.</p>') +
+            detailsSection('External phone searches', manual) +
             '</div>';
         return;
     }
@@ -422,14 +432,17 @@ function displayResults(data) {
     if (kind === 'email') {
         const confirmed = (Array.isArray(data.found_in_sources) ? data.found_in_sources : []).map(sourceCard).join('');
         const technical = Array.isArray(data.technical_checks) ? data.technical_checks : [];
-        const checks = technical.map(sourceCard).join('');
+        const candidates = technical.filter(source => source?.status === 'candidates_unverified');
+        const checks = technical.filter(source => source?.status !== 'candidates_unverified');
         resultContent.innerHTML = '<div class="result-card"><h3>Email Search</h3>' +
             field('Email', data.email) + field('Domain', data.domain) +
-            field('Summary', data.summary) +
-            coverageNotice(technical, confirmed ? '' : 'No confirmed matches were returned.') +
-            section('Verified public sources', confirmed) +
-            section('Technical checks', checks) +
-            section('Manual searches — unverified', manualLinks(data.manual_sources, 'source_url')) +
+            '<p class="result-notice">' + escapeHtml(data.summary ||
+                (confirmed ? 'Confirmed matches are listed below.' : 'No confirmed matches were returned.')) + '</p>' +
+            coverageNotice(technical) +
+            section('Confirmed sources', confirmed) +
+            detailsSection('Technical checks (' + checks.length + ')', checks.map(sourceCard).join('')) +
+            detailsSection('Unverified candidates', candidates.map(sourceCard).join('')) +
+            detailsSection('External web searches', manualLinks(data.manual_sources, 'source_url')) +
             '</div>';
         return;
     }

@@ -50,7 +50,7 @@ async def search_phone(phone: str) -> Dict:
     digits = re.sub(r"\D", "", clean)
     if not clean.startswith("+") or not 7 <= len(digits) <= 15:
         return {"query_type": "phone", "status": "error", "phone": original,
-                "message": "Use an international number with 7–15 digits, e.g. +353851234567."}
+                "message": "Enter a plus sign followed by the country calling code and phone number (7–15 digits total)."}
     if phonenumbers is None:
         return {"query_type": "phone", "status": "error", "phone": original,
                 "message": "Phone metadata is unavailable: install the phonenumbers dependency."}
@@ -95,5 +95,5 @@ async def search_phone(phone: str) -> Dict:
         "info_sources": info_sources,
         "manual_sources": manual_sources,
         "total_sources": 0,
-        "summary": "No confirmed public matches; technical metadata and manual lookup options are available.",
+        "summary": "TraceNova checked the numbering plan. Public searches are available as external links.",
     }
