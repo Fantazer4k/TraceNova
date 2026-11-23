@@ -29,7 +29,7 @@ TraceNova/
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10 or later. CI checks Python 3.10 and 3.13 on Ubuntu and Windows.
 - pip
 
 ## Installation
@@ -70,6 +70,8 @@ cp .env.example .env
 
 Never commit real API keys, passwords, tokens, cookies, or other credentials. Keep secrets in `.env` or another secret-management system.
 
+For optional exact username checks, set `X_BEARER_TOKEN` for X, `YOUTUBE_API_KEY` for YouTube, or `VK_SERVICE_TOKEN` for VK. To enable Telegram, install `Telethon==1.45.0` in the same environment and set `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and `TELEGRAM_BOT_TOKEN`. The Telegram lookup uses a bot session in memory and returns user profile links only.
+
 ## Running
 
 From the `tracenova` directory:
@@ -79,10 +81,24 @@ python main.py
 ```
 
 The development server runs on `http://127.0.0.1:8000` by default.
+Use `HOST` and `PORT` to override the bind address and port. Each worker accepts
+up to `MAX_CONCURRENT_ANALYSES` simultaneous analyses (default: 8) and returns
+HTTP 503 when busy. Configure client access and rate limits at the gateway for
+network deployments.
+
+## Checks
+
+After installing the application dependencies, run `python -m pip check` and
+`python -m unittest discover -s tests -v` from `tracenova/`. With Node.js 24,
+run `node tests/test_frontend_safety.js` from the same directory.
+GitHub Actions records a resolved dependency list for each Python and OS
+combination and audits those versions with pip-audit.
 
 ## Responsible use
 
 TraceNova is designed around public and permitted information sources. Results may be incomplete or inaccurate, and a matching username, email, or phone number does not prove that two records belong to the same person.
+
+IP Search sends public IP addresses to Shodan InternetDB for indexed hostnames. Email Search includes optional Brave Search results and external Google, Bing, and DuckDuckGo links. Opening one of those links shares the queried address with that search provider.
 
 Respect the terms of service and applicable laws of every service you query.
 

@@ -1,11 +1,14 @@
 """FastAPI application and validated public-analysis API."""
+import asyncio
 import logging
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -28,6 +31,7 @@ class AnalysisRequest(BaseModel):
 
 
 def create_app() -> FastAPI:
+    analysis_slots = asyncio.Semaphore(settings.max_concurrent_analyses)
     app = FastAPI(
         title="TraceNova",
         description="Public-source OSINT and digital-intelligence learning platform",
@@ -39,10 +43,28 @@ def create_app() -> FastAPI:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.cors_origins,
-            allow_credentials=True,
+            allow_credentials=False,
             allow_methods=["POST"],
             allow_headers=["Content-Type"],
         )
+
+    @app.middleware("http")
+    async def protect_responses(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        if request.url.path.rstrip("/") == "/api/analyze":
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path == "/api/analyze":
+            return JSONResponse(
+                status_code=422,
+                content={"detail": "Invalid analysis request. Check the query type and length."},
+            )
+        return await request_validation_exception_handler(request, exc)
 
     static_path = Path(__file__).parent.parent / "frontend" / "static"
     if static_path.exists():
@@ -51,7 +73,9 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         template_path = Path(__file__).parent.parent / "frontend" / "templates" / "index.html"
-        return FileResponse(template_path)
+        return FileResponse(template_path, headers={
+            "Content-Security-Policy": "default-src 'self'; img-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        })
 
     @app.post("/api/analyze")
     async def analyze(request: AnalysisRequest):
@@ -62,6 +86,14 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail="Query too short for this search type.")
         if kind == "domain" and len(query) < 3:
             raise HTTPException(status_code=422, detail="Domain must be at least three characters.")
+        try:
+            await asyncio.wait_for(analysis_slots.acquire(), timeout=0.1)
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=503, detail="Analysis is busy. Please retry shortly.",
+                headers={"Retry-After": "1"},
+            ) from None
+
         try:
             if kind == "url":
                 result = await analyze_url(query)
@@ -85,10 +117,11 @@ def create_app() -> FastAPI:
             return result
         except HTTPException:
             raise
-        except Exception:
-            # Never log full queries (email addresses, phone numbers, etc.).
-            logger.exception("Analysis failed for query_type=%s", kind)
+        except Exception as exc:
+            logger.error("Analysis failed for query_type=%s (%s)", kind, type(exc).__name__)
             raise HTTPException(status_code=500, detail="An internal error occurred.")
+        finally:
+            analysis_slots.release()
 
     @app.get("/health")
     async def health_check():

@@ -30,7 +30,44 @@ class _FakeSession:
         return _FakeResponse(self.status, self.payload)
 
 
+class ShodanTests(unittest.TestCase):
+    def test_returns_only_indexed_hostnames_and_distinct_provider_statuses(self):
+        address = "8.8.8.8"
+        for status, payload, expected in (
+            (200, {"ip": address, "hostnames": ["dns.google"], "ports": [53], "vulns": ["example"]},
+             {"status": "checked", "hostnames": ["dns.google"]}),
+            (404, {}, {"status": "not_found"}),
+            (429, {}, {"status": "rate_limited"}),
+            (503, {}, {"status": "unavailable"}),
+            (200, {"ip": "1.1.1.1", "hostnames": ["wrong.example"]}, {"status": "unavailable"}),
+        ):
+            with self.subTest(status=status, expected=expected):
+                session = _FakeSession(status, payload)
+                context = AsyncMock()
+                context.__aenter__.return_value = session
+                with patch.object(ip_resolver.aiohttp, "ClientSession", return_value=context):
+                    self.assertEqual(asyncio.run(ip_resolver._shodan_ip(address)), expected)
+
+
 class EmailConfidenceTests(unittest.TestCase):
+    def test_empty_rate_limited_and_invalid_responses_are_distinct(self):
+        for status, body, expected in (
+            (200, {"total_count": 0}, "checked_no_match"),
+            (429, {}, "rate_limited"),
+            (503, {}, "unavailable"),
+            (200, [], "error"),
+        ):
+            with self.subTest(status=status, expected=expected):
+                session = _FakeSession(status, body)
+                result = asyncio.run(email_search._search_github(session, "example@example.com"))
+                self.assertEqual(result["status"], expected)
+
+    def test_timeout_is_not_reported_as_absence(self):
+        session = _FakeSession(200, {})
+        with patch.object(session, "get", side_effect=asyncio.TimeoutError):
+            result = asyncio.run(email_search._check_gravatar(session, "example@example.com"))
+        self.assertEqual(result["status"], "timeout")
+
     def test_github_profile_search_is_unverified(self):
         session = _FakeSession(200, {
             "total_count": 8,

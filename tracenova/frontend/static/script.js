@@ -20,18 +20,39 @@ function safeExternalUrl(value) {
 
 const analyzeBtn = document.getElementById('analyzeBtn');
 const queryInput = document.getElementById('queryInput');
+const queryLabel = document.getElementById('queryLabel');
 const queryType = document.getElementById('queryType');
 const resultsSection = document.getElementById('results');
 const resultContent = document.getElementById('resultContent');
 const helpIcon = document.getElementById('helpIcon');
 const helpModal = document.getElementById('helpModal');
 const closeHelp = document.getElementById('closeHelp');
+const searchStatus = document.getElementById('searchStatus');
+const exampleTitle = document.getElementById('exampleTitle');
+const exampleDescription = document.getElementById('exampleDescription');
+const exampleQuery = document.getElementById('exampleQuery');
+let activeRequest = null;
+
+const lookupExamples = {
+    domain: ['Domain name', 'example.com', 'Try a domain lookup',
+        'Look up DNS records for example.com, a domain reserved for documentation.'],
+    url: ['URL', 'https://example.com', 'Try a URL lookup',
+        'Check DNS records and HTTPS certificate details for https://example.com.'],
+    ip: ['IP address', '192.0.2.1', 'Try an IP lookup',
+        'Check 192.0.2.1, an address reserved for documentation.'],
+    username: ['Username', 'octocat', 'Try a username lookup',
+        'Look for exact public matches for octocat, GitHub’s example account.'],
+    email: ['Email address', 'email@example.com', 'Try an email lookup',
+        'Check email@example.com, an illustrative address on a documentation domain.'],
+    phone: ['Phone number', '+123456789', 'Try a phone lookup',
+        'See how TraceNova reports a number that does not fit its numbering plan.']
+};
 
 // Help content for each search type
 const helpContent = {
     domain: {
         title: "Domain Search",
-        text: "Enter a domain name to resolve its IPv4 address and available reverse DNS data. This is not a full website security audit."
+        text: "Enter a domain name to look up IPv4 and IPv6 records and available reverse DNS data."
     },
     url: {
         title: "URL Search",
@@ -43,7 +64,7 @@ const helpContent = {
     },
     username: {
         title: "Username Search",
-        text: "Check matching usernames using public structured APIs (GitHub, GitLab, Reddit, Bluesky and others). Instagram, TikTok, X and Telegram are candidate links for manual checking, not verified accounts."
+        text: "Enter an exact username. TraceNova shows links for confirmed public matches and a short result for each platform."
     },
     email: {
         title: "Email Search",
@@ -55,9 +76,9 @@ const helpContent = {
     }
 };
 
-analyzeBtn.addEventListener('click', analyze);
-queryInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') analyze();
+document.getElementById('searchForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    return analyze();
 });
 
 // Help icon functionality
@@ -67,64 +88,117 @@ helpIcon.addEventListener('click', () => {
     if (help) {
         document.getElementById('helpTitle').textContent = help.title;
         document.getElementById('helpText').textContent = help.text;
-        helpModal.classList.remove('hidden');
+        helpModal.showModal();
     }
 });
 
 closeHelp.addEventListener('click', () => {
-    helpModal.classList.add('hidden');
+    helpModal.close();
 });
 
-helpModal.addEventListener('click', (e) => {
-    if (e.target === helpModal) {
-        helpModal.classList.add('hidden');
+helpModal.addEventListener('close', () => helpIcon.focus());
+
+helpModal.addEventListener('click', (event) => {
+    if (event.target !== helpModal) return;
+    const bounds = helpModal.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom) {
+        helpModal.close();
     }
 });
 
 queryType.addEventListener('change', () => {
-    const type = queryType.value;
-    const placeholders = {
-        domain: 'example.com',
-        url: 'https://example.com',
-        ip: '8.8.8.8',
-        username: 'username',
-        email: 'email@example.com',
-        phone: '+353851234567'
-    };
-    queryInput.placeholder = placeholders[type] || 'Enter search query...';
+    activeRequest?.abort();
+    activeRequest = null;
+    setLoading(false);
+    searchStatus.textContent = '';
+    queryInput.removeAttribute('aria-invalid');
+    resultsSection.classList.add('hidden');
+    resultContent.textContent = '';
+    const [label, placeholder, title, description] = lookupExamples[queryType.value] || lookupExamples.domain;
+    queryLabel.textContent = label;
+    queryInput.placeholder = placeholder;
+    exampleTitle.textContent = title;
+    exampleDescription.textContent = description;
+    exampleQuery.textContent = 'Use ' + placeholder;
 });
 
+queryInput.addEventListener('input', () => {
+    if (queryInput.hasAttribute('aria-invalid')) {
+        queryInput.removeAttribute('aria-invalid');
+        searchStatus.textContent = '';
+    }
+});
+
+exampleQuery.addEventListener('click', () => {
+    const [, value] = lookupExamples[queryType.value] || lookupExamples.domain;
+    queryInput.value = value;
+    if (queryInput.hasAttribute('aria-invalid')) {
+        queryInput.removeAttribute('aria-invalid');
+        searchStatus.textContent = '';
+    }
+    queryInput.focus();
+});
+
+function setLoading(loading) {
+    analyzeBtn.disabled = loading;
+    analyzeBtn.textContent = loading ? 'Analyzing…' : 'Analyze';
+    resultsSection.setAttribute('aria-busy', String(loading));
+}
+
 async function analyze() {
+    if (activeRequest) return;
     const query = queryInput.value.trim();
     const type = queryType.value;
 
     if (!query) {
-        alert('Please enter a query');
+        searchStatus.textContent = 'Enter a query to begin.';
+        queryInput.setAttribute('aria-invalid', 'true');
+        queryInput.focus();
         return;
     }
 
-    analyzeBtn.disabled = true;
-    analyzeBtn.textContent = 'Analyzing...';
+    queryInput.removeAttribute('aria-invalid');
+    const request = new AbortController();
+    activeRequest = request;
+    setLoading(true);
+    resultsSection.classList.remove('hidden');
+    searchStatus.textContent = 'Checking sources…';
+    resultContent.innerHTML = `
+        <div class="result-card result-loading">
+            <h3>Analysis in progress</h3>
+            <div class="result-skeleton" aria-hidden="true">
+                <span></span><span></span><span></span>
+            </div>
+        </div>`;
 
     try {
         const response = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, query_type: type })
+            body: JSON.stringify({ query, query_type: type }),
+            signal: request.signal
         });
-        const data = await response.json();
+        const data = await response.json().catch(() => null);
+        if (activeRequest !== request) return;
 
         if (!response.ok) {
-            throw new Error(data.detail || `Request failed (HTTP ${response.status})`);
+            throw new Error(typeof data?.detail === 'string' ? data.detail : `Request failed (HTTP ${response.status})`);
         }
 
         displayResults(data);
+        searchStatus.textContent = !data || typeof data !== 'object' || data.status === 'error'
+            ? 'Analysis failed. See the details below.'
+            : 'Analysis complete. Results are below.';
     } catch (error) {
-        resultsSection.classList.remove('hidden');
-        resultContent.innerHTML = `<div class="result-error"><h3>Analysis failed</h3><p>${escapeHtml(error.message)}</p></div>`;
+        if (activeRequest !== request) return;
+        searchStatus.textContent = 'Analysis failed. See the details below.';
+        resultContent.innerHTML = errorCard('Analysis failed', '', error.message);
     } finally {
-        analyzeBtn.disabled = false;
-        analyzeBtn.textContent = 'Analyze';
+        if (activeRequest === request) {
+            activeRequest = null;
+            setLoading(false);
+        }
     }
 }
 
@@ -165,6 +239,35 @@ function detailsMarkup(details) {
     ).join('') + '</div>';
 }
 
+function statusBadge(status) {
+    if (!status) return '';
+    const labels = {
+        found: 'Verified match', checked: 'Checked', checked_no_match: 'No match',
+        not_found: 'No match', no_mx: 'No MX record', null_mx: 'Null MX',
+        nxdomain: 'Domain not found', rate_limited: 'Rate limited',
+        not_configured: 'Not configured', candidates_unverified: 'Unverified candidates',
+        unavailable: 'Unavailable', timeout: 'Timed out', error: 'Error',
+        incomplete: 'Incomplete', verification_failed: 'Verification failed',
+    };
+    const tone = ['found', 'checked'].includes(status) ? 'confirmed'
+        : ['rate_limited', 'unavailable', 'timeout', 'error', 'incomplete', 'verification_failed'].includes(status)
+            ? 'attention' : 'neutral';
+    const label = Object.hasOwn(labels, status) ? labels[status] : String(status).replaceAll('_', ' ');
+    return '<span class="status-badge status-' + tone + '">' + escapeHtml(label) + '</span>';
+}
+
+function coverageNotice(sources) {
+    const incomplete = sources.filter(source => source && [
+        'unavailable', 'timeout', 'error', 'rate_limited', 'incomplete', 'not_configured',
+    ].includes(source.status));
+    if (incomplete.length) {
+        const names = incomplete.map(source => source.source || source.platform || 'Unknown source').join(', ');
+        return '<p class="result-notice result-notice-attention"><strong>Partial coverage.</strong> ' +
+            'Checks were unavailable or incomplete for ' + escapeHtml(names) + '.</p>';
+    }
+    return '';
+}
+
 function sourceCard(source) {
     if (!source || typeof source !== 'object') return '';
     const profiles = Array.isArray(source.profiles) ? source.profiles : [];
@@ -177,8 +280,9 @@ function sourceCard(source) {
             externalLink(p.profile_url, p.username || 'Public profile', 'profile-link') + '</div>';
     }).join('');
     return '<div class="email-source-item"><div class="source-header"><span class="source-badge">' +
-        escapeHtml(source.icon || '•') + ' ' + escapeHtml(source.source || source.platform || 'Source') +
-        '</span></div><div class="source-content">' +
+        escapeHtml(source.source || source.platform || 'Source') +
+        '</span>' + statusBadge(source.status) +
+        '</div><div class="source-content">' +
         (source.description ? '<p class="source-description">' + escapeHtml(source.description) + '</p>' : '') +
         (source.note ? '<p class="source-note">' + escapeHtml(source.note) + '</p>' : '') +
         detailsMarkup(source.details) + profileHtml +
@@ -191,7 +295,13 @@ function sourceCard(source) {
 }
 
 function section(title, content) {
-    return content ? '<h4>' + escapeHtml(title) + '</h4><div class="email-sources-list">' + content + '</div>' : '';
+    return content ? '<section class="result-group"><h4>' + escapeHtml(title) +
+        '</h4><div class="email-sources-list">' + content + '</div></section>' : '';
+}
+
+function detailsSection(title, content) {
+    return content ? '<details class="result-group"><summary>' + escapeHtml(title) +
+        '</summary><div class="email-sources-list">' + content + '</div></details>' : '';
 }
 
 function manualLinks(items, urlField) {
@@ -247,6 +357,9 @@ function displayResults(data) {
             field('Approximate location source', ip.geolocation_source) +
             field('Registry note', ip.registry_note) +
             field('Geolocation note', ip.geolocation_note) +
+            (ip.shodan ? section('Shodan InternetDB', statusBadge(ip.shodan.status) +
+                field('Indexed hostnames', ip.shodan.hostnames) +
+                '<p class="source-note">Hostnames come from Shodan’s index and may be out of date.</p>') : '') +
             '<p class="source-note">Approximate IP geolocation is not a precise physical location.</p>' +
             field('Summary', data.message) + '</div>';
         return;
@@ -266,23 +379,39 @@ function displayResults(data) {
     if (kind === 'username') {
         const profiles = Array.isArray(data.profiles) ? data.profiles : [];
         const checked = Array.isArray(data.sources) ? data.sources : [];
-        const found = profiles.map(p => '<div class="profile-item">' +
-            '<span class="platform-badge">' + escapeHtml(p.platform) + '</span> ' +
-            externalLink(p.profile_url, 'Verified public profile', 'profile-link') + '</div>').join('');
-        const checkedHtml = checked.map(p => '<div class="profile-item">' +
-            '<span class="platform-badge">' + escapeHtml(p.platform) + '</span> ' +
-            '<span class="status-badge">' + escapeHtml(p.status) + '</span>' +
-            (p.error ? ' <span class="source-note">' + escapeHtml(p.error) + '</span>' : '') +
-            '</div>').join('');
+        const names = new Map(Object.entries({
+            github: 'GitHub', gitlab: 'GitLab', reddit: 'Reddit', keybase: 'Keybase',
+            hackernews: 'Hacker News', devto: 'DEV Community', codeberg: 'Codeberg',
+            bluesky: 'Bluesky', x: 'X', youtube: 'YouTube', instagram: 'Instagram',
+            tiktok: 'TikTok', facebook: 'Facebook', telegram: 'Telegram', vk: 'VK',
+            snapchat: 'Snapchat', pinterest: 'Pinterest', tumblr: 'Tumblr',
+            stackoverflow: 'Stack Overflow', pastebin: 'Pastebin'
+        }));
+        const matches = new Map(profiles.map(profile => [profile.platform, profile]));
+        const platforms = new Map([...checked, ...profiles].map(source => [source.platform, source]));
+        const rows = Array.from(platforms, ([platform, source]) => {
+            const name = names.get(platform) || platform;
+            const url = matches.get(platform)?.profile_url;
+            const link = externalLink(url, url, 'profile-link');
+            let message = 'Could not verify a match on ' + name + '.';
+            if (source.status === 'not_found') {
+                message = 'No user with this username was found on ' + name + '.';
+            } else if (source.reason === 'not_configured') {
+                message = name + ' lookup is not configured.';
+            } else if (source.reason === 'unsupported') {
+                message = name + ' lookup is not supported.';
+            } else if (source.status === 'rate_limited') {
+                message = name + ' temporarily limited requests.';
+            } else if (source.status === 'timeout') {
+                message = name + ' did not respond in time.';
+            }
+            return '<li class="profile-item">' +
+                (link ? '<span class="platform-badge">' + escapeHtml(name) + '</span> ' + link
+                    : escapeHtml(message)) + '</li>';
+        }).join('');
         resultContent.innerHTML = '<div class="result-card"><h3>Username: ' +
             escapeHtml(data.username) + '</h3>' +
-            field('Verified profiles', profiles.length) +
-            field('Summary', data.message) +
-            section('Verified public profiles', found) +
-            section('Candidate links — not confirmed (Instagram, TikTok, X, Telegram and others)',
-                manualLinks(data.manual_sources, 'profile_url')) +
-            (checkedHtml ? '<details><summary>API check status (' + checked.length +
-                ')</summary>' + checkedHtml + '</details>' : '') +
+            '<ul class="profiles-list" aria-label="Results by platform">' + rows + '</ul>' +
             '</div>';
         return;
     }
@@ -290,25 +419,30 @@ function displayResults(data) {
     if (kind === 'phone') {
         const confirmed = (Array.isArray(data.found_in_sources) ? data.found_in_sources : []).map(sourceCard).join('');
         const info = (Array.isArray(data.info_sources) ? data.info_sources : []).map(sourceCard).join('');
+        const manual = manualLinks(data.manual_sources, 'source_url');
         resultContent.innerHTML = '<div class="result-card"><h3>Phone Search</h3>' +
-            field('Number', data.phone) + field('Summary', data.summary) +
-            section('Verified public matches', confirmed) +
-            section('Technical number information (not public matches)', info) +
-            section('Manual searches — unverified', manualLinks(data.manual_sources, 'source_url')) +
+            field('Number', data.phone) +
+            section('Numbering plan', info) +
+            section('Public matches', confirmed || '<p>TraceNova did not run an automated public search for this number.</p>') +
+            detailsSection('External phone searches', manual) +
             '</div>';
         return;
     }
 
     if (kind === 'email') {
         const confirmed = (Array.isArray(data.found_in_sources) ? data.found_in_sources : []).map(sourceCard).join('');
-        const checks = (Array.isArray(data.technical_checks) ? data.technical_checks : []).map(sourceCard).join('');
+        const technical = Array.isArray(data.technical_checks) ? data.technical_checks : [];
+        const candidates = technical.filter(source => source?.status === 'candidates_unverified');
+        const checks = technical.filter(source => source?.status !== 'candidates_unverified');
         resultContent.innerHTML = '<div class="result-card"><h3>Email Search</h3>' +
             field('Email', data.email) + field('Domain', data.domain) +
-            field('Summary', data.summary) +
-            (confirmed ? section('Verified public sources', confirmed) :
-                '<p class="source-note">No confirmed matches; this does not establish absence.</p>') +
-            section('Technical checks', checks) +
-            section('Manual searches — unverified', manualLinks(data.manual_sources, 'source_url')) +
+            '<p class="result-notice">' + escapeHtml(data.summary ||
+                (confirmed ? 'Confirmed matches are listed below.' : 'No confirmed matches were returned.')) + '</p>' +
+            coverageNotice(technical) +
+            section('Confirmed sources', confirmed) +
+            detailsSection('Technical checks (' + checks.length + ')', checks.map(sourceCard).join('')) +
+            detailsSection('Unverified candidates', candidates.map(sourceCard).join('')) +
+            detailsSection('External web searches', manualLinks(data.manual_sources, 'source_url')) +
             '</div>';
         return;
     }

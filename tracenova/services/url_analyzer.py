@@ -11,7 +11,6 @@ import ipaddress
 import json
 import socket
 import ssl
-from urllib.error import URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
@@ -21,6 +20,7 @@ _DOH_ENDPOINTS = (
     "https://dns.google/resolve",
 )
 _DOH_TIMEOUT_SECONDS = 3
+_DOH_MAX_RESPONSE_BYTES = 64 * 1024
 
 
 def _resolve_with_doh(hostname: str) -> list[str]:
@@ -37,16 +37,25 @@ def _resolve_with_doh(hostname: str) -> list[str]:
             )
             try:
                 with urlopen(request, timeout=_DOH_TIMEOUT_SECONDS) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-                if payload.get("Status") != 0:
+                    raw_payload = response.read(_DOH_MAX_RESPONSE_BYTES + 1)
+                if len(raw_payload) > _DOH_MAX_RESPONSE_BYTES:
+                    continue
+                payload = json.loads(raw_payload)
+                if not isinstance(payload, dict) or payload.get("Status") != 0:
+                    continue
+                answers = payload.get("Answer", [])
+                if not isinstance(answers, list):
                     continue
 
                 expected_version = 4 if record_type == "A" else 6
-                for answer in payload.get("Answer", []):
-                    if answer.get("type") != (1 if record_type == "A" else 28):
+                for answer in answers:
+                    if not isinstance(answer, dict) or answer.get("type") != (1 if record_type == "A" else 28):
+                        continue
+                    value = answer.get("data")
+                    if not isinstance(value, str):
                         continue
                     try:
-                        address = ipaddress.ip_address(answer.get("data", ""))
+                        address = ipaddress.ip_address(value)
                     except ValueError:
                         continue
                     if address.version == expected_version:
@@ -56,10 +65,23 @@ def _resolve_with_doh(hostname: str) -> list[str]:
                     for address in addresses
                 ):
                     break
-            except (OSError, URLError, ValueError, json.JSONDecodeError):
+            except (OSError, ValueError):
                 continue
 
     return list(dict.fromkeys(addresses))
+
+
+def is_public_unicast(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Classify an address consistently before making public network queries."""
+    if getattr(address, "scope_id", None) is not None:
+        return False
+    target = getattr(address, "ipv4_mapped", None) or address
+    return (
+        target.is_global
+        and not target.is_multicast
+        and not target.is_reserved
+        and not getattr(target, "is_site_local", False)
+    )
 
 
 def _resolve_public_addresses(hostname: str, port: int) -> list[str]:
@@ -83,7 +105,11 @@ def _resolve_public_addresses(hostname: str, port: int) -> list[str]:
         raise socket.gaierror("No A or AAAA records were returned by the DNS resolvers.")
 
     parsed = [ipaddress.ip_address(address) for address in addresses]
-    if any(not address.is_global for address in parsed):
+    for address in parsed:
+        if getattr(address, "scope_id", None) is not None:
+            raise ValueError("Scoped IP addresses are not supported.")
+
+    if any(not is_public_unicast(address) for address in parsed):
         raise ValueError(
             "The URL resolves to a non-public IP address. Local and private network targets are blocked."
         )
@@ -119,7 +145,9 @@ def _analyze_url(url: str) -> dict:
             raise ValueError("URLs containing embedded credentials are not supported.")
 
         hostname = parsed.hostname.encode("idna").decode("ascii").lower()
-        port = parsed.port or (443 if scheme == "https" else 80)
+        port = parsed.port
+        if port is None:
+            port = 443 if scheme == "https" else 80
         if not 1 <= port <= 65535:
             raise ValueError("Invalid port number.")
 

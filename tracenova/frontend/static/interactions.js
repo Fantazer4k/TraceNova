@@ -6,7 +6,11 @@
 class InteractiveGridBackground {
     constructor() {
         this.canvas = document.getElementById('gridCanvas');
-        this.ctx = this.canvas.getContext('2d');
+        this.ctx = this.canvas?.getContext('2d');
+        if (!this.ctx) return;
+
+        this.motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+        this.frame = null;
 
         this.mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
         this.gridSize = 50;
@@ -18,7 +22,7 @@ class InteractiveGridBackground {
 
         this.setupCanvas();
         this.attachEventListeners();
-        this.animate();
+        this.updateAnimation();
     }
 
     setupCanvas() {
@@ -41,6 +45,9 @@ class InteractiveGridBackground {
             this.mouse.x = window.innerWidth / 2;
             this.mouse.y = window.innerHeight / 2;
         });
+
+        document.addEventListener('visibilitychange', () => this.updateAnimation());
+        this.motionPreference.addEventListener('change', () => this.updateAnimation());
     }
 
     getGridPoint(gridX, gridY) {
@@ -76,7 +83,6 @@ class InteractiveGridBackground {
 
     drawBackground() {
         // Draw solid background
-        this.ctx.fillStyle = `linear-gradient(135deg, ${getComputedStyle(document.documentElement).getPropertyValue('--canvas')} 0%, #0a0b1a 100%)`;
         const gradient = this.ctx.createLinearGradient(0, 0, this.canvas.width, this.canvas.height);
         gradient.addColorStop(0, '#05060f');
         gradient.addColorStop(1, '#0a0b1a');
@@ -171,10 +177,21 @@ class InteractiveGridBackground {
         this.ctx.fill();
     }
 
+    updateAnimation() {
+        if (document.hidden || this.motionPreference.matches) {
+            if (this.frame !== null) cancelAnimationFrame(this.frame);
+            this.frame = null;
+        } else if (this.frame === null) {
+            this.frame = requestAnimationFrame(() => this.animate());
+        }
+    }
+
     animate() {
+        this.frame = null;
+        if (document.hidden || this.motionPreference.matches) return;
         this.drawBackground();
         this.drawGrid();
-        requestAnimationFrame(() => this.animate());
+        this.updateAnimation();
     }
 }
 

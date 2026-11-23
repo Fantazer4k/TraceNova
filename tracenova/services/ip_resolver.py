@@ -10,6 +10,8 @@ import aiohttp
 import asyncio
 from typing import Dict, Optional
 
+from services.url_analyzer import is_public_unicast
+
 async def resolve_domain_to_ip(domain: str) -> Dict:
     """Resolve public A/AAAA records using the same protected DNS path as URL Search.
 
@@ -99,13 +101,17 @@ async def analyze_ip(ip_text: str) -> Dict:
 
     address = str(ip)
     info = await get_additional_ip_info(address)
-    info["address_type"] = "public" if ip.is_global else "private_or_reserved"
-    if ip.is_global:
-        rdap, geo = await asyncio.gather(_rdap_ip(address), _geo_ip(address))
+    public_unicast = is_public_unicast(ip)
+    info["address_type"] = "public" if public_unicast else "private_or_reserved"
+    if public_unicast:
+        rdap, geo, shodan = await asyncio.gather(
+            _rdap_ip(address), _geo_ip(address), _shodan_ip(address)
+        )
         info.update(rdap)
         info.update(geo)
+        info["shodan"] = shodan
     else:
-        info["registry_note"] = "Private/reserved address: public network metadata not applicable."
+        info["registry_note"] = "Public network metadata requires a public unicast address."
 
     return {
         "query_type": "ip",
@@ -115,6 +121,35 @@ async def analyze_ip(ip_text: str) -> Dict:
         "ip_info": info,
         "message": "IP analysis completed. Location is approximate and may identify the provider, not a person.",
     }
+
+
+async def _shodan_ip(address: str) -> Dict:
+    """Read indexed hostname metadata from Shodan InternetDB."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=4)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get("https://internetdb.shodan.io/" + address,
+                                   allow_redirects=False) as response:
+                if response.status == 404:
+                    return {"status": "not_found"}
+                if response.status == 429:
+                    return {"status": "rate_limited"}
+                if response.status != 200:
+                    return {"status": "unavailable"}
+                data = await response.json(content_type=None)
+    except asyncio.TimeoutError:
+        return {"status": "timeout"}
+    except (aiohttp.ClientError, ValueError):
+        return {"status": "unavailable"}
+
+    if not isinstance(data, dict) or data.get("ip") != address:
+        return {"status": "unavailable"}
+    hostnames = data.get("hostnames")
+    if not isinstance(hostnames, list):
+        return {"status": "unavailable"}
+    return {"status": "checked", "hostnames": [
+        name for name in hostnames if isinstance(name, str) and 0 < len(name) <= 253
+    ][:20]}
 
 
 async def _rdap_ip(address: str) -> Dict:

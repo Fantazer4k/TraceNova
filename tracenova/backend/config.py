@@ -21,8 +21,9 @@ class Settings:
     app_name: str = "TraceNova"
     debug: bool = _env_bool("DEBUG", False)
     api_version: str = "0.1.0"
-    host: str = os.getenv("HOST", "0.0.0.0")
+    host: str = os.getenv("HOST", "127.0.0.1")
     port: int = int(os.getenv("PORT", "8000"))
+    max_concurrent_analyses: int = max(1, int(os.getenv("MAX_CONCURRENT_ANALYSES", "8")))
     cors_origins: list[str] = [
         origin.strip()
         for origin in os.getenv("CORS_ORIGINS", "").split(",")

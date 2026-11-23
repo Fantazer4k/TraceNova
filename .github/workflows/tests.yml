@@ -2,25 +2,75 @@ name: TraceNova checks
 
 on:
   push:
-    branches: [main, fix/search-reliability-nov2026]
+    branches: [main, 'repair/**']
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.11"
-      - name: Install dependencies
+          python-version: ${{ matrix.python }}
+      - name: Create an isolated application environment
+        shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r tracenova/requirements.txt
+          python -m venv --without-pip .venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip --python .venv install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bin = if ($IsWindows) { '.venv/Scripts' } else { '.venv/bin' }
+          (Resolve-Path $bin).Path >> $env:GITHUB_PATH
+      - name: Install dependencies
+        run: python -m pip install -r tracenova/requirements.txt
+      - name: Check installed dependencies
+        run: python -m pip check
       - name: Python regression tests
         working-directory: tracenova
         run: python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Record resolved application dependencies
+        run: python -m pip freeze > resolved-dependencies.txt
+      - name: Upload resolved dependencies
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: dependencies-${{ matrix.os }}-py${{ matrix.python }}
+          path: resolved-dependencies.txt
+          if-no-files-found: error
+      - name: Audit resolved dependencies
+        shell: pwsh
+        run: |
+          $sitePackages = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m venv .audit-venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $auditPython = if ($IsWindows) { '.audit-venv/Scripts/python.exe' } else { '.audit-venv/bin/python' }
+          & $auditPython -m pip install pip-audit==2.10.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $auditPython -m pip_audit --path $sitePackages --progress-spinner off
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
       - name: Check frontend JavaScript syntax
-        run: node --check tracenova/frontend/static/script.js
-      - name: Test frontend XSS protection
+        run: |
+          node --check tracenova/frontend/static/script.js
+          node --check tracenova/frontend/static/interactions.js
+      - name: Test frontend result rendering
         run: node tracenova/tests/test_frontend_safety.js
